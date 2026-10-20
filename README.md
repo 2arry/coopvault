@@ -23,7 +23,7 @@ It is the backend for the CoopVault PWA (separate repo) but is fully usable from
 On any Frappe v15 bench:
 
 ```bash
-bench get-app https://github.com/<you>/coopvault
+bench get-app https://github.com/2arry/coopvault
 bench --site <your-site> install-app coopvault
 ```
 
