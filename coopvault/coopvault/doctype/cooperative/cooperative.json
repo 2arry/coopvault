@@ -1,0 +1,255 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:COOP-{#####}",
+ "creation": "2026-10-20 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "cooperative_name",
+  "status",
+  "description",
+  "cb1",
+  "join_code",
+  "currency",
+  "created_by_user",
+  "rules_section",
+  "contribution_amount",
+  "contribution_frequency",
+  "cb2",
+  "loan_multiplier",
+  "interest_rate",
+  "max_loan_tenure_months",
+  "bank_section",
+  "bank_name",
+  "cb3",
+  "account_number",
+  "cb4",
+  "account_name",
+  "summary_section",
+  "member_count",
+  "total_contributions",
+  "total_repayments",
+  "cb5",
+  "total_disbursed",
+  "loans_outstanding",
+  "pool_balance"
+ ],
+ "fields": [
+  {
+   "bold": 1,
+   "fieldname": "cooperative_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Cooperative Name",
+   "reqd": 1
+  },
+  {
+   "default": "Active",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Active\nInactive"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "cb1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Share this code with members so they can request to join",
+   "fieldname": "join_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Join Code",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "default": "NGN",
+   "fieldname": "currency",
+   "fieldtype": "Data",
+   "label": "Currency"
+  },
+  {
+   "fieldname": "created_by_user",
+   "fieldtype": "Link",
+   "label": "Created By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rules_section",
+   "fieldtype": "Section Break",
+   "label": "Rules"
+  },
+  {
+   "description": "Suggested amount each member contributes per period",
+   "fieldname": "contribution_amount",
+   "fieldtype": "Currency",
+   "label": "Expected Contribution",
+   "options": "currency"
+  },
+  {
+   "default": "Monthly",
+   "fieldname": "contribution_frequency",
+   "fieldtype": "Select",
+   "label": "Contribution Frequency",
+   "options": "Weekly\nMonthly\nQuarterly\nFlexible"
+  },
+  {
+   "fieldname": "cb2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Max outstanding loan as a multiple of a member's confirmed contributions. 1 = members can never borrow more than they have contributed.",
+   "fieldname": "loan_multiplier",
+   "fieldtype": "Float",
+   "label": "Borrow Limit Multiplier",
+   "non_negative": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "interest_rate",
+   "fieldtype": "Percent",
+   "label": "Loan Interest Rate (flat %)"
+  },
+  {
+   "default": "12",
+   "fieldname": "max_loan_tenure_months",
+   "fieldtype": "Int",
+   "label": "Max Loan Tenure (Months)"
+  },
+  {
+   "fieldname": "bank_section",
+   "fieldtype": "Section Break",
+   "label": "Bank Account (for manual transfers)"
+  },
+  {
+   "fieldname": "bank_name",
+   "fieldtype": "Data",
+   "label": "Bank Name"
+  },
+  {
+   "fieldname": "cb3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "account_number",
+   "fieldtype": "Data",
+   "label": "Account Number"
+  },
+  {
+   "fieldname": "cb4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "account_name",
+   "fieldtype": "Data",
+   "label": "Account Name"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "summary_section",
+   "fieldtype": "Section Break",
+   "label": "Pool Summary"
+  },
+  {
+   "fieldname": "member_count",
+   "fieldtype": "Int",
+   "label": "Active Members",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_contributions",
+   "fieldtype": "Currency",
+   "label": "Total Contributions",
+   "options": "currency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_repayments",
+   "fieldtype": "Currency",
+   "label": "Total Repayments",
+   "options": "currency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb5",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_disbursed",
+   "fieldtype": "Currency",
+   "label": "Total Loans Disbursed",
+   "options": "currency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "loans_outstanding",
+   "fieldtype": "Currency",
+   "label": "Loans Outstanding",
+   "options": "currency",
+   "read_only": 1
+  },
+  {
+   "bold": 1,
+   "fieldname": "pool_balance",
+   "fieldtype": "Currency",
+   "label": "Pool Balance (Cash at hand)",
+   "options": "currency",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-20 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CoopVault",
+ "name": "Cooperative",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Coop Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "cooperative_name,join_code",
+ "show_title_field_in_link": 1,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "cooperative_name",
+ "track_changes": 1
+}
