@@ -231,6 +231,8 @@ def contribution_standing(member, contributed=None):
 		paid_through=paid_through,
 		current_period_start=current.start if current else None,
 		current_period_end=current.end if current else None,
+		# What the next unpaid period still needs, at that period's plan (a scheduled change shows here)
+		next_amount=flt(next_open.amount - remaining) if next_open else flt(shown.amount),
 		next_due_date=(next_open.start if next_open else None) if state == "up_to_date" else (
 			current.end if current else (first[0].start if first else None)
 		),

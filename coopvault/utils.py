@@ -4,7 +4,7 @@ import re
 
 import frappe
 from frappe import _
-from frappe.utils import cint, format_datetime, get_datetime, now_datetime
+from frappe.utils import cint, flt, fmt_money, format_datetime, get_datetime, now_datetime
 
 
 def normalize_phone(value):
@@ -79,3 +79,10 @@ def throttle(action, limit, seconds):
 def mask_account(number):
 	number = str(number or "")
 	return f"••{number[-4:]}" if len(number) >= 4 else number
+
+
+def money_text(amount, currency="NGN"):
+	"""How money reads in messages and notifications: ₦12,000, or ₦12,500.50 when there are kobo."""
+	amount = flt(amount, 2)
+	symbol = frappe.db.get_value("Currency", currency, "symbol", cache=True) or f"{currency} "
+	return symbol + fmt_money(amount, precision=0 if amount == int(amount) else 2)

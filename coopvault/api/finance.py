@@ -9,16 +9,16 @@ the member who received it. Nobody can send money to themselves.
 import frappe
 from frappe import _
 from frappe.rate_limiter import rate_limit
-from frappe.utils import cint, flt, fmt_money, getdate, now_datetime, today
+from frappe.utils import cint, flt, getdate, now_datetime, today
 
 from coopvault.api import ensure_not_self, get_membership
 from coopvault.ledger import cooperative_totals, loan_schedule, member_balances
 from coopvault.notify import notify, staff_of
-from coopvault.utils import check_hold, mask_account
+from coopvault.utils import check_hold, mask_account, money_text
 
 
 def _money(amount, cooperative):
-	return fmt_money(amount, currency=frappe.db.get_value("Cooperative", cooperative, "currency"))
+	return money_text(amount, frappe.db.get_value("Cooperative", cooperative, "currency"))
 
 
 def _list(doctype, cooperative, me, scope, status, fields, limit, start, extra_filters=None):

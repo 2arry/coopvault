@@ -2,10 +2,11 @@
 
 import frappe
 from frappe import _
-from frappe.utils import date_diff, fmt_money, getdate, today
+from frappe.utils import date_diff, getdate, today
 
 from coopvault.ledger import TRACKED, contribution_standing, plan_on, plans_for
 from coopvault.notify import notify
+from coopvault.utils import money_text
 
 REMIND_DAYS_BEFORE_END = 3
 
@@ -32,7 +33,7 @@ def remind_due_contributions():
 				continue  # Autosave will take care of it
 			notify(
 				m.user,
-				_("{0} due in {1} days").format(fmt_money(s.due_now, currency=coop.currency), REMIND_DAYS_BEFORE_END),
+				_("{0} due in {1} days").format(money_text(s.due_now, coop.currency), REMIND_DAYS_BEFORE_END),
 				_("Pay in a tap to stay up to date."),
 				link="/save",
 				cooperative=coop.name,

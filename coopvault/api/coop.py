@@ -4,7 +4,7 @@ import secrets
 import frappe
 from frappe import _
 from frappe.rate_limiter import rate_limit
-from frappe.utils import add_days, add_to_date, cint, flt, fmt_money, getdate, now_datetime, today
+from frappe.utils import add_days, add_to_date, cint, flt, getdate, now_datetime, today
 
 from coopvault import paystack
 from coopvault.api import ensure_not_self, get_membership, is_super_user, require_login
@@ -22,7 +22,7 @@ from coopvault.ledger import (
 	shift_period,
 )
 from coopvault.notify import members_of, notify, staff_of
-from coopvault.utils import mask_account, require_password
+from coopvault.utils import mask_account, money_text, require_password
 
 COOP_PUBLIC_FIELDS = [
 	"name",
@@ -222,7 +222,7 @@ def _plan_info(cooperative):
 	now = getdate(today())
 	current = plan_on(plans, now)
 	upcoming = next((p for p in plans if p.effective_from > now), None)
-	return {"current": current, "upcoming": upcoming}
+	return {"current": current, "upcoming": upcoming, "started": bool(_has_contributions(cooperative))}
 
 
 def _public_coop(cooperative, membership):
@@ -340,7 +340,7 @@ def update_cooperative(cooperative, **kwargs):
 		text = (
 			_("From {0}, each member contributes {1} {2}. Earlier periods keep the old amount.").format(
 				frappe.utils.formatdate(change["effective_from"], "d MMMM yyyy"),
-				fmt_money(amount, currency=coop.currency),
+				money_text(amount, coop.currency),
 				every,
 			)
 			if every
@@ -546,7 +546,7 @@ def leave_cooperative(cooperative):
 	if b.savings > 0.005 or b.withdrawal_requested > 0.005:
 		frappe.throw(
 			_("You still have {0} in savings. Request a withdrawal for all of it first, then you can leave.").format(
-				fmt_money(b.savings, currency=currency)
+				money_text(b.savings, currency)
 			)
 		)
 	m = frappe.get_doc("Coop Member", me.name)

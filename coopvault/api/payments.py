@@ -14,13 +14,13 @@ import json
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, add_months, cint, flt, fmt_money, get_datetime, getdate, now_datetime, today
+from frappe.utils import add_days, add_months, cint, flt, get_datetime, getdate, now_datetime, today
 
 from coopvault import paystack
 from coopvault.api import get_membership, require_login
-from coopvault.ledger import contribution_standing, refresh_all
+from coopvault.ledger import TRACKED, contribution_standing, plan_on, plans_for, refresh_all
 from coopvault.notify import notify, staff_of
-from coopvault.utils import throttle
+from coopvault.utils import money_text, throttle
 
 MIN_ONLINE_AMOUNT = 100
 AUTOSAVE_MAX_FAILURES = 3
@@ -106,13 +106,13 @@ def _check_repayment(me, loan, amount, currency):
 	if ln.status != "Active":
 		frappe.throw(_("This loan is not active"))
 	if amount > flt(ln.balance) + 0.005:
-		frappe.throw(_("Amount exceeds the loan balance of {0}").format(fmt_money(ln.balance, currency=currency)))
+		frappe.throw(_("Amount exceeds the loan balance of {0}").format(money_text(ln.balance, currency)))
 
 
 @frappe.whitelist(methods=["POST"])
 def initialize(cooperative, purpose, amount, loan=None, save_method=0, setup_autosave=0):
 	if not paystack.is_enabled():
-		frappe.throw(_("Online payment is not enabled. Record a bank transfer instead."))
+		frappe.throw(_("Online payments aren't switched on yet. Ask your admin."))
 	me = get_membership(cooperative)
 	if not me.name:
 		frappe.throw(_("Only members can pay"))
@@ -122,7 +122,7 @@ def initialize(cooperative, purpose, amount, loan=None, save_method=0, setup_aut
 
 	amount = flt(amount, 2)
 	if amount < MIN_ONLINE_AMOUNT:
-		frappe.throw(_("Minimum online payment is {0}").format(fmt_money(MIN_ONLINE_AMOUNT, currency=coop.currency)))
+		frappe.throw(_("Minimum online payment is {0}").format(money_text(MIN_ONLINE_AMOUNT, coop.currency)))
 	if purpose == "Loan Repayment":
 		_check_repayment(me, loan, amount, coop.currency)
 	elif purpose == "Contribution":
@@ -370,7 +370,7 @@ def _notify_payment(tx, doc):
 	via = {"Autosave": _(" by Autosave"), "Dedicated Account": _(" by transfer to your account number")}.get(tx.source, "")
 	notify(
 		tx.user,
-		_("{0} added {1}{2}").format(fmt_money(tx.amount, currency=currency), what, via),
+		_("{0} added {1}{2}").format(money_text(tx.amount, currency), what, via),
 		link=f"/receipt/{doc.doctype}/{doc.name}",
 		cooperative=tx.cooperative,
 		kind="payment",
@@ -392,7 +392,7 @@ def _reverse_payment(tx, reason):
 		refresh_all(member=tx.member, cooperative=tx.cooperative, loan=tx.loan)
 	notify(
 		[tx.user, *staff_of(tx.cooperative)],
-		_("A payment of {0} was reversed").format(fmt_money(tx.amount, currency=tx.currency)),
+		_("A payment of {0} was reversed").format(money_text(tx.amount, tx.currency)),
 		reason,
 		cooperative=tx.cooperative,
 		kind="payment-reversed",
@@ -426,7 +426,7 @@ def _handle_dispute(kind, data):
 		tx.save(ignore_permissions=True)
 		notify(staff_of(tx.cooperative), _("A card payment is being disputed"),
 			_("{0} paid by {1}. It stays counted until the dispute is settled.").format(
-				fmt_money(tx.amount, currency=tx.currency), frappe.db.get_value("User", tx.user, "full_name")),
+				money_text(tx.amount, tx.currency), frappe.db.get_value("User", tx.user, "full_name")),
 			cooperative=tx.cooperative, kind="payment-disputed")
 	elif kind == "charge.dispute.resolve" and tx.status == "Disputed":
 		if data.get("resolution") == "merchant-accepted":
@@ -603,11 +603,21 @@ def _disable_autosave(member, reason=None):
 	)
 
 
+def _autosave_amount(cooperative, amount, on_date=None):
+	"""What Autosave charges on a date. Set to the regular contribution, it follows plan changes;
+	a custom amount stays as the member chose it."""
+	plans = plans_for(cooperative)
+	plan = plan_on(plans, getdate(on_date or today()))
+	if plan.frequency in TRACKED and flt(plan.amount) and any(abs(flt(p.amount) - flt(amount)) < 0.005 for p in plans):
+		return flt(plan.amount)
+	return flt(amount)
+
+
 def autosave_status(member):
 	m = frappe.db.get_value(
 		"Coop Member",
 		member,
-		["autosave_enabled", "autosave_amount", "autosave_authorization", "autosave_next_date",
+		["cooperative", "autosave_enabled", "autosave_amount", "autosave_authorization", "autosave_next_date",
 			"autosave_last_error"],
 		as_dict=True,
 	)
@@ -620,7 +630,7 @@ def autosave_status(member):
 		method = _method_row(a) if a else None
 	return {
 		"enabled": bool(m.autosave_enabled),
-		"amount": m.autosave_amount,
+		"amount": _autosave_amount(m.cooperative, m.autosave_amount, m.autosave_next_date) if m.autosave_enabled else m.autosave_amount,
 		"next_date": m.autosave_next_date,
 		"last_error": m.autosave_last_error,
 		"method": method,
@@ -665,7 +675,9 @@ def charge_autosave(member):
 		_disable_autosave(member, _("Membership or payment method is no longer active"))
 		return None
 	coop = _coop(m.cooperative)
-	amount = flt(m.autosave_amount)
+	amount = _autosave_amount(m.cooperative, m.autosave_amount, today())
+	if abs(amount - flt(m.autosave_amount)) >= 0.005:
+		m.db_set("autosave_amount", amount, update_modified=False)
 	fee = _fee_for(coop, amount)
 	reference = _new_reference()
 	tx = frappe.get_doc(
@@ -742,7 +754,8 @@ def remind_autosave():
 			continue
 		currency = frappe.db.get_value("Cooperative", m.cooperative, "currency")
 		notify(m.user, _("Autosave in 2 days"), _("We'll charge {0} on {1}. Change or pause it in the app.").format(
-			fmt_money(m.autosave_amount, currency=currency), frappe.utils.formatdate(soon, "d MMM")),
+			money_text(_autosave_amount(m.cooperative, m.autosave_amount, soon), currency),
+			frappe.utils.formatdate(soon, "d MMM")),
 			link="/autosave", cooperative=m.cooperative, kind="autosave")
 		frappe.db.set_value("Coop Member", m.name, "autosave_reminded_for", soon, update_modified=False)
 	frappe.db.commit()
