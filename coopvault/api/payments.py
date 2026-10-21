@@ -454,30 +454,48 @@ def check_mandate(reference):
 # Autosave -------------------------------------------------------------------------
 
 
-def _next_autosave_date(member, frequency, after=None):
-	"""Charge on the day the next unpaid period is due (today if one is due now)."""
+def _next_autosave_date(member, frequency, after=None, earliest=None):
+	"""When to charge next.
+
+	With `after`, one period later (used once a scheduled charge has gone through). Otherwise
+	the day the member's next unpaid period starts, or `earliest` (default today) if a
+	contribution is already due.
+	"""
 	if after:
 		after = getdate(after)
 		return add_days(after, 7) if frequency == "Weekly" else getdate(
 			add_months(after, 3 if frequency == "Quarterly" else 1)
 		)
+	earliest = getdate(earliest or today())
 	standing = contribution_standing(member)
 	if standing.get("tracked") and standing.state == "up_to_date":
-		return getdate(standing.next_due_date)
-	return getdate(today())
+		return max(getdate(standing.next_due_date), earliest)
+	return earliest
+
+
+def _after_charge_date(member, frequency, charged_for):
+	"""Next charge after a successful one: when the next unpaid period starts, or a period later."""
+	standing = contribution_standing(member)
+	if standing.get("tracked") and standing.state == "up_to_date":
+		return max(getdate(standing.next_due_date), getdate(add_days(today(), 1)))
+	return _next_autosave_date(member, frequency, after=charged_for or today())
 
 
 def _enable_autosave(member, amount, authorization, start_date=None, from_payment=False):
 	m = frappe.db.get_value("Coop Member", member, ["name", "cooperative"], as_dict=True)
-	frequency = frappe.db.get_value("Cooperative", m.cooperative, "contribution_frequency")
-	frequency = frequency if frequency in ("Weekly", "Monthly", "Quarterly") else "Monthly"
+	coop = frappe.db.get_value(
+		"Cooperative", m.cooperative, ["contribution_frequency", "contribution_amount"], as_dict=True
+	)
+	tracked = coop.contribution_frequency in ("Weekly", "Monthly", "Quarterly")
+	frequency = coop.contribution_frequency if tracked else "Monthly"
+	if from_payment and tracked and flt(coop.contribution_amount):
+		# A catch-up payment shouldn't become the recurring amount: save the regular contribution
+		amount = flt(coop.contribution_amount)
 	if start_date:
 		next_date = getdate(start_date)
-	elif from_payment:
-		# The payment that set this up already covered the current period
-		next_date = _next_autosave_date(member, frequency, after=today())
 	else:
-		next_date = _next_autosave_date(member, frequency)
+		# Never charge again on the day of the payment that turned Autosave on
+		next_date = _next_autosave_date(member, frequency, earliest=add_days(today(), 1) if from_payment else None)
 	frappe.db.set_value(
 		"Coop Member",
 		member,
@@ -612,7 +630,7 @@ def charge_autosave(member):
 		"Coop Member",
 		member,
 		{
-			"autosave_next_date": _next_autosave_date(member, frequency, after=m.autosave_next_date or today()),
+			"autosave_next_date": _after_charge_date(member, frequency, m.autosave_next_date),
 			"autosave_failures": 0,
 			"autosave_last_error": None,
 		},

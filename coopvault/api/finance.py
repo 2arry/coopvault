@@ -373,7 +373,14 @@ def pending_reviews(cooperative):
 		),
 		"contributions": _list("Coop Contribution", cooperative, me, "all", "Pending", CONTRIBUTION_FIELDS, 100, 0),
 		"loans": [
-			{**l, "member_balances": member_balances(l.member, exclude_loan=l.name)}
+			{
+				**l,
+				"member_balances": member_balances(l.member, exclude_loan=l.name),
+				"payout_account": frappe.db.get_value(
+					"Coop Member", l.member, ["payout_bank_name", "payout_account_number", "payout_account_name"],
+					as_dict=True,
+				),
+			}
 			for l in _list("Coop Loan", cooperative, me, "all", "Pending", LOAN_FIELDS, 100, 0)
 		],
 		"repayments": _list("Coop Loan Repayment", cooperative, me, "all", "Pending", REPAYMENT_FIELDS, 100, 0),

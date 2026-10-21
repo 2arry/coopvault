@@ -1,6 +1,7 @@
 import frappe
 from frappe import _
-from frappe.utils import add_days, cint, flt, getdate, today
+from frappe.rate_limiter import rate_limit
+from frappe.utils import add_days, cint, flt, today
 
 from coopvault import paystack
 from coopvault.api import get_membership, is_super_user, require_login
@@ -30,11 +31,12 @@ COOP_PUBLIC_FIELDS = [
 	"account_number",
 	"account_name",
 	"account_verified",
+	"settlement_bank_code",
 	"accept_online_payments",
 	"fee_bearer",
 ]
 COOP_EDITABLE_FIELDS = [
-	f for f in COOP_PUBLIC_FIELDS if f not in ("name", "status", "account_verified")
+	f for f in COOP_PUBLIC_FIELDS if f not in ("name", "status", "account_verified", "settlement_bank_code")
 ]
 BANK_FIELDS = ("bank_name", "account_number", "account_name")
 
@@ -104,6 +106,22 @@ def create_cooperative(cooperative_name, **kwargs):
 		}
 	).insert(ignore_permissions=True)
 	return {"name": coop.name, "join_code": coop.join_code}
+
+
+@frappe.whitelist(allow_guest=True)
+@rate_limit(limit=30, seconds=60 * 10)
+def preview_invite(join_code):
+	"""What an invite link points to, so new members know what they are joining."""
+	coop = frappe.db.get_value(
+		"Cooperative",
+		{"join_code": (join_code or "").strip().upper(), "status": "Active"},
+		["cooperative_name", "description", "member_count", "contribution_amount", "contribution_frequency",
+			"currency"],
+		as_dict=True,
+	)
+	if not coop:
+		frappe.throw(_("This invite code isn't valid any more. Ask your admin for a new link."))
+	return coop
 
 
 @frappe.whitelist(methods=["POST"])
