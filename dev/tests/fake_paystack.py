@@ -24,11 +24,17 @@ def now():
 	return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
+def fee(kobo):
+	"""Paystack's local card pricing: 1.5% + ₦100 (no ₦100 under ₦2,500), capped at ₦2,000."""
+	f = kobo * 0.015 + (10000 if kobo >= 250000 else 0)
+	return int(round(min(f, 200000)))
+
+
 def tx_data(t):
 	return {
 		"id": t["id"], "status": t["status"], "reference": t["reference"], "amount": t["amount"],
 		"currency": t.get("currency", "NGN"), "channel": t.get("channel", "card"), "paid_at": t.get("paid_at"),
-		"gateway_response": t.get("gateway_response", "Successful"), "fees": int(t["amount"] * 0.015),
+		"gateway_response": t.get("gateway_response", "Successful"), "fees": fee(t["amount"]),
 		"metadata": t.get("metadata"),
 		"subaccount": {"subaccount_code": t["subaccount"]} if t.get("subaccount") else {},
 		"customer": {"email": t["email"], "customer_code": "CUS_" + t["email"].split("@")[0][:10]},

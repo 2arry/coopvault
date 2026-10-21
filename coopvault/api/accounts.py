@@ -61,6 +61,13 @@ def summary(cooperative):
 		for r in year if r.root_type == root), 2)
 	kind = lambda *k: accounting.type_balance(cooperative, k)
 	income, expenses = movement("Income"), movement("Expense")
+	locked = accounting.books_closed_until(cooperative)
+	first = frappe.db.sql("""select min(posting_date) from `tabCoop Journal Entry`
+		where cooperative = %s and status in ('Posted', 'Reversed')""", cooperative)[0][0]
+	share_from = add_days(locked, 1) if locked else first
+	# Suggest sharing out last financial year if it has ended and isn't closed yet, else up to yesterday
+	last_year_end = add_days(start, -1)
+	suggested_end = last_year_end if share_from and getdate(last_year_end) >= getdate(share_from) else add_days(today(), -1)
 	return {
 		"currency": _currency(cooperative),
 		"bank": kind("Bank"),
@@ -80,6 +87,9 @@ def summary(cooperative):
 		"books_closed_until": accounting.books_closed_until(cooperative),
 		"drafts": frappe.db.count("Coop Journal Entry", {"cooperative": cooperative, "status": "Draft"}),
 		"share_out_draft": frappe.db.get_value("Coop Share Out", {"cooperative": cooperative, "status": "Draft"}),
+		"share_out_from": share_from,
+		"suggested_share_out_end": suggested_end,
+		"reserve_percent": flt(frappe.db.get_value("Cooperative", cooperative, "reserve_percent") or 25),
 	}
 
 

@@ -2,7 +2,7 @@
 from datetime import date, timedelta
 
 from harness import (
-	PW, RUN, call, check, console, done, err, fake, get, guard, new_cooperative, pay, rejected, signup, webhook,
+	PW, RUN, call, check, paystack_fee, console, done, err, fake, get, guard, new_cooperative, pay, rejected, signup, webhook,
 )
 
 guard()
@@ -22,7 +22,7 @@ rejected("members can't read the books", "accounts.summary", M, method="GET", co
 pay(M, CO, 10000)
 pay(N, CO, 6000)
 s = get("accounts.summary", A, cooperative=CO)
-fee = 10000 * 0.015 + 6000 * 0.015  # the fake keeps 1.5%
+fee = paystack_fee(10000) + paystack_fee(6000)  # the group pays Paystack's fee here
 check("members are credited in full", s["members_savings"] == 16000, s["members_savings"])
 check("the pool is what reached the bank (fees taken off)", abs(s["cash_total"] - (16000 - fee)) < 0.01, s["cash_total"])
 check("fees show as a cost", abs(s["expenses"] - fee) < 0.01, s["expenses"])

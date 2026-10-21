@@ -1,7 +1,7 @@
 """Fixes from the October review: late/unmatched account-number transfers, push after sign-out,
 phone number changes."""
 from harness import (
-	N, PW, RUN, call, check, console, done, err, fake, fake_get, get, guard, new_cooperative, raw, rejected, signup,
+	N, PW, RUN, paystack_fee, call, check, console, done, err, fake, fake_get, get, guard, new_cooperative, raw, rejected, signup,
 	webhook,
 )
 
@@ -38,7 +38,7 @@ res = transfer(email_b, num_b, 5000, f"LATE-{RUN}")
 check("late transfer to a former member's number is accepted (no retry loop)", res.status_code == 200, res.text[:200])
 mine = get("auth.me", B)["cooperatives"]
 left = next((m for m in mine if m["cooperative"] == CO), None)
-NET = 5000 - 5000 * 0.015  # the fake Paystack keeps 1.5%; members bear the transfer fee here
+NET = 5000 - paystack_fee(5000)  # members bear the transfer fee here
 check("the group still shows for them while it holds their money", left and left["status"] == "Left" and left["savings"] == NET, left)
 staff_notes = get("notifications.list_notifications", A)["items"]
 check("staff are told about it", any("sent ₦5,000 to their account number" in n["title"] for n in staff_notes))
@@ -54,7 +54,7 @@ email_c = give_account_number(C, ids[C], num_c, f"CUS_c{RUN}")
 call("coop.update_member", A, member=ids[C], status="Suspended")
 res = transfer(email_c, num_c, 3000, f"SUSP-{RUN}")
 check("transfer from a suspended member is recorded", res.status_code == 200 and
-	get("coop.get_statement", A, cooperative=CO, member=ids[C])["balances"]["savings"] == 3000 * 0.985)
+	get("coop.get_statement", A, cooperative=CO, member=ids[C])["balances"]["savings"] == 3000 - paystack_fee(3000))
 
 # Nobody's number
 res = transfer("ghost@example.com", "7999999999", 2000, f"GHOST-{RUN}")

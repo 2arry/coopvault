@@ -254,7 +254,7 @@ webhook("charge.success", tdata)
 webhook("charge.success", tdata)
 d = call("coop.get_dashboard", B, method="GET", cooperative=CO)
 # Members bear the transfer fee here, so they're credited what arrived (the fake keeps 1.5%)
-check("transfer to dedicated account saved once", d["balances"]["total_contributed"] == before + 15000 * 0.985,
+check("transfer to dedicated account saved once", d["balances"]["total_contributed"] == before + 15000 - (15000 * 0.015 + 100),
 	d["balances"]["total_contributed"] - before)
 
 # --- Receipts & misc ----------------------------------------------------------------

@@ -24,6 +24,11 @@ N = int(RUN, 16) % 10**6
 results = []
 
 
+def paystack_fee(amount):
+	"""What the fake Paystack keeps from a charge of `amount` naira (same as Paystack's pricing)."""
+	return round(min(amount * 0.015 + (100 if amount >= 2500 else 0), 2000), 2)
+
+
 def check(name, cond, detail=""):
 	results.append(bool(cond))
 	print(("PASS " if cond else "FAIL ") + name + (f"  [{detail}]" if detail != "" else ""))
