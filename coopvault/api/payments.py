@@ -216,11 +216,14 @@ def verify(reference):
 	if tx.user != me.user and not me.is_admin:
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 
+	current = None
 	if tx.status not in ("Success", "Failed"):
 		data = paystack.verify_transaction(reference)
 		if data:
-			_complete(reference, data)
-	return _tx_summary(frappe.get_doc("Coop Payment Transaction", reference))
+			# _complete reads under a row lock, so it sees a webhook that finished a moment ago;
+			# a plain read here could still return this request's older snapshot
+			current = _complete(reference, data)
+	return _tx_summary(current or frappe.get_doc("Coop Payment Transaction", reference))
 
 
 @frappe.whitelist(methods=["POST"])

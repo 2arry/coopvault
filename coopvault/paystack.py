@@ -106,7 +106,19 @@ def checkout_fee(amount):
 # Banks ----------------------------------------------------------------------------
 
 
+TEST_BANK = {"name": "Paystack Test Bank", "code": "001", "slug": "test-bank"}
+
+
 def list_banks(currency="NGN"):
+	"""Banks for account lookups. Test keys also get Paystack's test bank (code 001), which
+	resolves any 10-digit number; real banks are limited to 3 lookups a day in test mode."""
+	banks = _live_banks(currency)
+	if is_test_mode() and currency == "NGN":
+		return [TEST_BANK, *banks]
+	return banks
+
+
+def _live_banks(currency):
 	key = f"coopvault:paystack_banks:{currency}"
 	banks = frappe.cache.get_value(key)
 	if banks:
@@ -146,6 +158,8 @@ def resolve_account(account_number, bank_code):
 		"GET", "/bank/resolve", params={"account_number": account_number, "bank_code": bank_code}, throw=False
 	)
 	if not data.get("status"):
+		if is_test_mode() and "limit" in (data.get("message") or "").lower():
+			frappe.throw(_("Paystack test mode only checks 3 real accounts a day. Choose Paystack Test Bank instead."))
 		frappe.throw(_("We couldn't verify that account. Check the number and bank."))
 	return data["data"]["account_name"]
 
@@ -155,10 +169,14 @@ def resolve_account(account_number, bank_code):
 
 def upsert_subaccount(coop):
 	creator = frappe.db.get_value("User", coop.created_by_user, ["email", "full_name", "mobile_no"], as_dict=True)
+	bank, number = coop.settlement_bank_code, coop.account_number
+	if is_test_mode() and bank == TEST_BANK["code"]:
+		# Paystack won't attach a subaccount to its test bank, but accepts its sandbox account
+		bank, number = "057", "0000000000"
 	body = {
 		"business_name": coop.cooperative_name[:100],
-		"settlement_bank": coop.settlement_bank_code,
-		"account_number": coop.account_number,
+		"settlement_bank": bank,
+		"account_number": number,
 		"percentage_charge": flt(settings().platform_fee_percent),
 		"description": f"CoopVault cooperative {coop.name}",
 	}
