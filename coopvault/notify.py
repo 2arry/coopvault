@@ -98,7 +98,7 @@ def send_push(users, payload):
 	if not pem:
 		return
 	vapid = Vapid01.from_pem(pem.encode())
-	claims = {"sub": settings.vapid_subject or "mailto:admin@example.com"}
+	claims = {"sub": settings.vapid_subject or frappe.utils.get_url()}  # Apple rejects placeholder subjects
 	subs = frappe.get_all(
 		"Coop Push Subscription", filters={"user": ["in", users]}, fields=["name", "endpoint", "p256dh", "auth"]
 	)
