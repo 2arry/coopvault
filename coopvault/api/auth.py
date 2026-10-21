@@ -5,13 +5,20 @@ import frappe
 from frappe import _
 from frappe.auth import LoginAttemptTracker
 from frappe.rate_limiter import rate_limit
-from frappe.utils import add_to_date, cint, get_datetime, now_datetime, validate_email_address
+from frappe.utils import cint, get_datetime, now_datetime, validate_email_address
 from frappe.utils.password import check_password, update_password
 
 from coopvault import sessions
 from coopvault.api import require_login
 from coopvault.notify import notify, staff_of
-from coopvault.utils import check_hold, check_password_strength, mask_account, normalize_phone, require_password
+from coopvault.utils import (
+	check_hold,
+	check_password_strength,
+	mask_account,
+	normalize_phone,
+	require_password,
+	start_hold,
+)
 
 INVALID_LOGIN = _("That email/phone and password don't match")
 RESET_MAX_ATTEMPTS = 5
@@ -135,20 +142,52 @@ def me():
 
 
 @frappe.whitelist(methods=["POST"])
-def update_profile(full_name=None, phone=None):
+@rate_limit(limit=10, seconds=60 * 10)
+def update_profile(full_name=None, phone=None, password=None):
+	"""Name and phone number. Admins send password-reset codes to the phone on file, so changing
+	it needs the password, tells the member and their admins, and pauses money moves for a while."""
 	user = frappe.get_doc("User", require_login())
 	if full_name:
 		names = full_name.strip().split(" ", 1)
 		user.first_name = names[0]
 		user.last_name = names[1] if len(names) > 1 else ""
+	phone_changed = False
 	if phone is not None:
 		phone = normalize_phone(phone)
-		if phone and frappe.db.exists("User", {"mobile_no": phone, "name": ["!=", user.name]}):
-			frappe.throw(_("That phone number can't be used"))
+		if phone != (user.mobile_no or None):
+			require_password(password, user.name)
+			if phone and frappe.db.exists("User", {"mobile_no": phone, "name": ["!=", user.name]}):
+				frappe.throw(_("That phone number can't be used"))
+			phone_changed = True
 		user.mobile_no = phone
 	user.save(ignore_permissions=True)
-	for m in frappe.get_all("Coop Member", filters={"user": user.name}, pluck="name"):
-		frappe.db.set_value("Coop Member", m, {"full_name": user.full_name, "phone": user.mobile_no})
+	memberships = frappe.get_all("Coop Member", filters={"user": user.name}, fields=["name", "cooperative", "status"])
+	for m in memberships:
+		values = {"full_name": user.full_name, "phone": user.mobile_no}
+		if phone_changed:
+			values["phone_changed_on"] = now_datetime()
+		frappe.db.set_value("Coop Member", m.name, values)
+
+	if phone_changed:
+		until, hours = start_hold(user.name)
+		shown = mask_account(phone) if phone else _("nothing")
+		notify(
+			user.name,
+			_("Your phone number was changed to {0}").format(shown),
+			_("For your security, payout changes, loans and withdrawals are paused for {0} hours. If this wasn't you, tell your admin now.").format(hours),
+			link="/profile",
+			kind="security",
+		)
+		for m in memberships:
+			if m.status != "Left":
+				notify(
+					staff_of(m.cooperative, exclude_users=[user.name]),
+					_("{0} changed their phone number").format(user.full_name),
+					_("Check it's really them before sending them a password reset code."),
+					link=f"/admin/members/{m.name}",
+					cooperative=m.cooperative,
+					kind="security",
+				)
 	return get_profile()
 
 
@@ -270,10 +309,7 @@ def reset_password_with_code(login, code, new_password):
 	frappe.db.set_value("Coop Password Reset", reset.name, "used_on", now_datetime())
 	sessions.revoke_all(user)
 
-	hours = cint(frappe.db.get_single_value("CoopVault Settings", "security_hold_hours")) or 72
-	hold_until = add_to_date(now_datetime(), hours=hours)
-	for m in frappe.get_all("Coop Member", filters={"user": user}, pluck="name"):
-		frappe.db.set_value("Coop Member", m, "security_hold_until", hold_until)
+	_until, hours = start_hold(user)
 	notify(
 		user,
 		_("Your password was reset"),

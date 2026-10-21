@@ -52,7 +52,7 @@ def list_contributions(cooperative, scope="mine", status=None, limit=50, start=0
 
 @frappe.whitelist(methods=["POST"])
 def propose_opening_balance(cooperative, member, amount, as_of=None, note=None):
-	"""Bring over what a member had already saved before joining CoopVault.
+	"""Bring over what a member had already saved before joining Cooperative360.
 
 	An admin or the treasurer proposes it (never for themselves); it only counts once the member
 	agrees in the app.
@@ -82,7 +82,7 @@ def propose_opening_balance(cooperative, member, amount, as_of=None, note=None):
 	notify(
 		m.user,
 		_("Confirm your opening balance of {0}").format(_money(amount, cooperative)),
-		_("This is what you'd already saved before CoopVault. Check it and accept or decline."),
+		_("This is what you'd already saved before Cooperative360. Check it and accept or decline."),
 		link="/home",
 		cooperative=cooperative,
 		kind="opening-balance",
@@ -346,9 +346,18 @@ WITHDRAWAL_FIELDS = [
 ]
 
 
+def _withdrawing_member(cooperative):
+	"""Active members withdraw savings; someone who has left can still take out money that
+	reached the group after they left (e.g. a late transfer to their old account number)."""
+	me = get_membership(cooperative, allow_inactive=True)
+	if me.status not in ("Active", "Left") or not me.name:
+		frappe.throw(_("Your membership is {0}").format(_(me.status)), frappe.PermissionError)
+	return me
+
+
 @frappe.whitelist()
 def withdrawal_eligibility(cooperative):
-	me = get_membership(cooperative)
+	me = _withdrawing_member(cooperative)
 	b = member_balances(me.name)
 	payout = frappe.db.get_value(
 		"Coop Member", me.name, ["payout_bank_name", "payout_account_number", "payout_account_name", "security_hold_until"],
@@ -366,7 +375,7 @@ def withdrawal_eligibility(cooperative):
 @frappe.whitelist(methods=["POST"])
 @rate_limit(limit=10, seconds=60 * 60)
 def request_withdrawal(cooperative, amount, reason=None):
-	me = get_membership(cooperative)
+	me = _withdrawing_member(cooperative)
 	check_hold(me.name)
 	if not frappe.db.get_value("Coop Member", me.name, "payout_account_number"):
 		frappe.throw(_("Add the bank account to receive the money first (Me → Where to send my money)"))

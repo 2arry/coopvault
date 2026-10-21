@@ -56,12 +56,24 @@ def check_password_strength(password, full_name="", email=""):
 		frappe.throw(_("Choose a stronger password. {0}").format(hint or _("Mix words, numbers and symbols.")))
 
 
+def start_hold(user):
+	"""Pause payout changes, loans and withdrawals on every membership for a while (after a
+	password reset or a phone number change). Returns (until, hours)."""
+	from frappe.utils import add_to_date
+
+	hours = cint(frappe.db.get_single_value("CoopVault Settings", "security_hold_hours")) or 72
+	until = add_to_date(now_datetime(), hours=hours)
+	for m in frappe.get_all("Coop Member", filters={"user": user}, pluck="name"):
+		frappe.db.set_value("Coop Member", m, "security_hold_until", until)
+	return until, hours
+
+
 def check_hold(member):
-	"""Block money moves for a while after a password reset done by an admin."""
+	"""Block money moves for a while after a password reset or phone number change."""
 	until = frappe.db.get_value("Coop Member", member, "security_hold_until")
 	if until and get_datetime(until) > now_datetime():
 		frappe.throw(
-			_("For your security this is paused after a password reset. You can do it again after {0}.").format(
+			_("For your security this is paused after a password reset or phone change. You can do it again after {0}.").format(
 				format_datetime(until, "d MMM, h:mm a")
 			)
 		)

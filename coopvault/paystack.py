@@ -1,4 +1,4 @@
-"""Minimal Paystack API client used by CoopVault.
+"""Minimal Paystack API client used by Cooperative360.
 
 Self-contained on purpose: the app must install on any bench without other payment apps.
 Endpoints follow Paystack's OpenAPI spec (github.com/PaystackOSS/openapi).
@@ -178,7 +178,7 @@ def upsert_subaccount(coop):
 		"settlement_bank": bank,
 		"account_number": number,
 		"percentage_charge": flt(settings().platform_fee_percent),
-		"description": f"CoopVault cooperative {coop.name}",
+		"description": f"Cooperative360 cooperative {coop.name}",
 	}
 	if creator:
 		body.update(
@@ -226,6 +226,18 @@ def assign_dedicated_account(user, subaccount=None, bank_code=None, account_numb
 	if bvn and bank_code and account_number:
 		body.update(bvn=bvn, bank_code=bank_code, account_number=account_number)
 	return call("POST", "/dedicated_account/assign", body=body)
+
+
+def deactivate_dedicated_account(account_id=None, customer_code=None):
+	"""Switch off a member's account number (when they leave), so transfers bounce at the bank
+	instead of landing in a group they're no longer part of. Returns True when Paystack agreed."""
+	if not account_id and customer_code:
+		customer = call("GET", f"/customer/{customer_code}", throw=False).get("data") or {}
+		accounts = customer.get("dedicated_accounts") or [customer.get("dedicated_account") or {}]
+		account_id = next((a.get("id") for a in accounts if a and a.get("active", True)), None)
+	if not account_id:
+		return False
+	return bool(call("DELETE", f"/dedicated_account/{account_id}", throw=False).get("status"))
 
 
 # Transactions -----------------------------------------------------------------------

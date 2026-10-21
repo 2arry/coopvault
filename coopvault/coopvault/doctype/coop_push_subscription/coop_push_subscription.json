@@ -14,7 +14,9 @@
   "cb1",
   "p256dh",
   "auth",
-  "user_agent"
+  "user_agent",
+  "session",
+  "discreet"
  ],
  "fields": [
   {
@@ -62,11 +64,25 @@
    "fieldtype": "Data",
    "label": "User Agent",
    "read_only": 1
+  },
+  {
+   "description": "Signing out of this login removes the device from push notifications",
+   "fieldname": "session",
+   "fieldtype": "Link",
+   "label": "Login Session",
+   "options": "Coop Session",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "discreet",
+   "fieldtype": "Check",
+   "label": "Hide Amounts on Lock Screen"
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 18:00:00.000000",
+ "modified": "2026-10-21 07:45:54.415823",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Push Subscription",

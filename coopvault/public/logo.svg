@@ -6,9 +6,15 @@
     </linearGradient>
   </defs>
   <rect width="512" height="512" rx="112" fill="url(#g)"/>
-  <circle cx="256" cy="256" r="150" fill="none" stroke="#ffffff" stroke-opacity=".35" stroke-width="26"/>
-  <circle cx="256" cy="256" r="92" fill="#ffffff"/>
-  <circle cx="256" cy="236" r="28" fill="#1d4ed8"/>
-  <path d="M244 250h24l12 62h-48z" fill="#1d4ed8"/>
-  <g fill="#ffffff"><circle cx="256" cy="92" r="24"/><circle cx="398" cy="338" r="24"/><circle cx="114" cy="338" r="24"/></g>
+  <!-- a full turn around the group: the 360 -->
+  <path d="M326.4 123.6A150 150 0 1 1 185.6 123.6" fill="none" stroke="#ffffff" stroke-width="30" stroke-linecap="butt"/>
+  <path d="M231.5 99.1L168.7 91.8L202.5 155.3z" fill="#ffffff" stroke="#ffffff" stroke-width="6" stroke-linejoin="round"/>
+  <!-- the shared pool -->
+  <circle cx="256" cy="256" r="58" fill="#ffffff"/>
+  <!-- members around it -->
+  <g fill="#ffffff" stroke="#1e48c9" stroke-width="12">
+    <circle cx="385.9" cy="181.0" r="32"/>
+    <circle cx="256.0" cy="406.0" r="32"/>
+    <circle cx="126.1" cy="181.0" r="32"/>
+  </g>
 </svg>

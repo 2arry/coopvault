@@ -16,6 +16,7 @@
   "fee",
   "charged_amount",
   "paystack_fees",
+  "settled_amount",
   "refunded_amount",
   "currency",
   "cb1",
@@ -60,7 +61,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Initiated\nPending\nSuccess\nFailed\nAbandoned\nRefunded\nDisputed"
+   "options": "Initiated\nPending\nSuccess\nFailed\nAbandoned\nRefunded\nDisputed\nUnmatched"
   },
   {
    "default": "Checkout",
@@ -93,6 +94,14 @@
    "fieldname": "paystack_fees",
    "fieldtype": "Currency",
    "label": "Paystack Fees",
+   "options": "currency",
+   "read_only": 1
+  },
+  {
+   "description": "What actually reaches the cooperative after Paystack's fee and any platform commission",
+   "fieldname": "settled_amount",
+   "fieldtype": "Currency",
+   "label": "Settled to Cooperative",
    "options": "currency",
    "read_only": 1
   },
@@ -215,7 +224,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 18:00:00.000000",
+ "modified": "2026-10-21 07:45:54.412957",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Payment Transaction",

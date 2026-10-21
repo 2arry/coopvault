@@ -16,8 +16,8 @@ class CoopContribution(Document):
 		member = frappe.db.get_value("Coop Member", self.member, ["cooperative", "status"], as_dict=True)
 		if not member or member.cooperative != self.cooperative:
 			frappe.throw(_("Member does not belong to this cooperative"))
-		if self.is_new() and member.status != "Active" and self.payment_method != "Paystack":
-			# A Paystack payment that already went through is recorded even if the member was suspended since
+		if self.is_new() and member.status != "Active" and not self.flags.money_received:
+			# Money that already reached the cooperative (through Paystack) is always recorded
 			frappe.throw(_("Only active members can make contributions"))
 		if self.has_value_changed("status") and self.status in ("Confirmed", "Rejected", "Reversed"):
 			self.reviewed_by = self.reviewed_by or frappe.session.user

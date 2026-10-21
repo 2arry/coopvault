@@ -17,6 +17,7 @@
   "status",
   "joined_on",
   "security_hold_until",
+  "phone_changed_on",
   "balances_section",
   "total_contributed",
   "total_repaid",
@@ -47,6 +48,7 @@
   "dva_error",
   "cb5",
   "dva_account_number",
+  "dva_id",
   "dva_account_name",
   "dva_bank_name"
  ],
@@ -110,10 +112,16 @@
    "label": "Joined On"
   },
   {
-   "description": "After a password reset, payout changes, loans and withdrawals wait until this time",
+   "description": "After a password reset or phone change, payout changes, loans and withdrawals wait until this time",
    "fieldname": "security_hold_until",
    "fieldtype": "Datetime",
    "label": "Security Hold Until",
+   "read_only": 1
+  },
+  {
+   "fieldname": "phone_changed_on",
+   "fieldtype": "Datetime",
+   "label": "Phone Last Changed",
    "read_only": 1
   },
   {
@@ -268,10 +276,11 @@
    "read_only": 1
   },
   {
+   "description": "Closed: the member left and the account number was switched off",
    "fieldname": "dva_status",
    "fieldtype": "Select",
    "label": "Status",
-   "options": "\nRequested\nAssigned\nFailed",
+   "options": "\nRequested\nAssigned\nFailed\nClosed",
    "read_only": 1
   },
   {
@@ -292,6 +301,12 @@
    "search_index": 1
   },
   {
+   "fieldname": "dva_id",
+   "fieldtype": "Data",
+   "label": "Paystack Dedicated Account ID",
+   "read_only": 1
+  },
+  {
    "fieldname": "dva_account_name",
    "fieldtype": "Data",
    "label": "Account Name",
@@ -306,7 +321,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 18:00:00.000000",
+ "modified": "2026-10-21 07:45:54.409206",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Member",

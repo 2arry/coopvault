@@ -1,4 +1,4 @@
-"""Whitelisted API consumed by the CoopVault PWA.
+"""Whitelisted API consumed by the Cooperative360 PWA.
 
 All endpoints check cooperative membership / roles explicitly and then work with
 ignore_permissions, so regular members never need desk access.

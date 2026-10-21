@@ -19,6 +19,12 @@ class CoopMember(Document):
 		if self.status == "Active" and not self.joined_on:
 			self.joined_on = today()
 
+	def on_update(self):
+		if self.has_value_changed("status") and self.status == "Left":
+			from coopvault.api.payments import close_dedicated_account
+
+			close_dedicated_account(self.name)
+
 	def on_trash(self):
 		for doctype in ("Coop Contribution", "Coop Loan"):
 			if frappe.db.exists(doctype, {"member": self.name}):

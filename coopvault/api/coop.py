@@ -59,7 +59,7 @@ def _membership_summary(member_name):
 		"Cooperative", m.cooperative, ["cooperative_name", "currency", "member_count"], as_dict=True
 	)
 	m.update(coop)
-	if m.status == "Active":
+	if m.status in ("Active", "Left", "Suspended"):
 		m.update(member_balances(member_name))
 	return m
 
@@ -92,11 +92,12 @@ def my_cooperatives():
 	user = require_login()
 	members = frappe.get_all(
 		"Coop Member",
-		filters={"user": user, "status": ["in", ["Active", "Pending", "Suspended"]]},
-		pluck="name",
+		filters={"user": user, "status": ["in", ["Active", "Pending", "Suspended", "Left"]]},
+		fields=["name", "status", "total_contributed"],
 		order_by="creation asc",
 	)
-	return [_membership_summary(m) for m in members]
+	# A group someone left only shows while it still holds money of theirs
+	return [_membership_summary(m.name) for m in members if m.status != "Left" or flt(m.total_contributed) > 0.005]
 
 
 @frappe.whitelist(methods=["POST"])
@@ -563,7 +564,9 @@ def leave_cooperative(cooperative):
 @rate_limit(limit=10, seconds=60 * 60)
 def create_reset_code(cooperative, member):
 	me = get_membership(cooperative, owner=True)
-	m = frappe.db.get_value("Coop Member", member, ["name", "user", "cooperative", "full_name", "phone"], as_dict=True)
+	m = frappe.db.get_value(
+		"Coop Member", member, ["name", "user", "cooperative", "full_name", "phone", "phone_changed_on"], as_dict=True
+	)
 	if not m or m.cooperative != cooperative:
 		frappe.throw(_("Member not found"))
 	ensure_not_self(me, m.name, _("You can't reset your own password this way. Ask another admin."))
@@ -593,7 +596,7 @@ def create_reset_code(cooperative, member):
 	notify(m.user, _("A password reset code was created for you"), _("By {0}. If you didn't ask for this, tell your admins.").format(who),
 		cooperative=cooperative, kind="security", push=False)
 	return {"code": f"{raw[:4]}-{raw[4:]}", "expires_on": expires, "minutes": RESET_CODE_MINUTES,
-		"full_name": m.full_name, "phone": m.phone}
+		"full_name": m.full_name, "phone": m.phone, "phone_changed_on": m.phone_changed_on}
 
 
 # Announcements -----------------------------------------------------------------
@@ -696,7 +699,7 @@ def get_statement(cooperative, member=None, limit=None):
 		"Coop Member",
 		member,
 		["name", "full_name", "phone", "role", "status", "joined_on", "payout_bank_name", "payout_account_number",
-			"payout_account_name", "payout_changed_on", "security_hold_until"],
+			"payout_account_name", "payout_changed_on", "security_hold_until", "phone_changed_on"],
 		as_dict=True,
 	)
 	balances = member_balances(member)

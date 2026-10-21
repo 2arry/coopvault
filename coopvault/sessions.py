@@ -86,8 +86,11 @@ def current():
 
 
 def revoke(name):
+	"""End one login. The device it was on also stops getting push notifications, so a lost or
+	shared phone doesn't keep showing payments on its lock screen."""
 	if name:
 		frappe.db.set_value("Coop Session", name, "revoked", 1, update_modified=False)
+		frappe.db.delete("Coop Push Subscription", {"session": name})
 
 
 def revoke_all(user, keep=None):
@@ -96,10 +99,32 @@ def revoke_all(user, keep=None):
 		filters["name"] = ["!=", keep]
 	for name in frappe.get_all("Coop Session", filters=filters, pluck="name"):
 		revoke(name)
+	# Devices subscribed before subscriptions were tied to a login
+	frappe.db.delete("Coop Push Subscription", {"user": user, "session": ["is", "not set"]})
+
+
+def ended(names):
+	"""Which of these logins are over: signed out, past their maximum age, or idle too long."""
+	names = [n for n in names if n]
+	if not names:
+		return set()
+	idle_days, _max = _limits()
+	now = now_datetime()
+	rows = frappe.get_all("Coop Session", filters={"name": ["in", names]}, fields=["name", "revoked", "expires_on", "last_seen"])
+	over = {
+		r.name for r in rows
+		if r.revoked or get_datetime(r.expires_on) <= now or get_datetime(r.last_seen) + timedelta(days=idle_days) <= now
+	}
+	return over | (set(names) - {r.name for r in rows})
 
 
 def cleanup():
 	"""Daily: forget sessions that ended a while ago."""
+	subs = frappe.get_all("Coop Push Subscription", filters={"session": ["is", "set"]}, fields=["name", "session"])
+	gone = ended([s.session for s in subs])
+	for s in subs:
+		if s.session in gone:
+			frappe.db.delete("Coop Push Subscription", s.name)
 	cutoff = add_to_date(now_datetime(), days=-30)
 	frappe.db.delete("Coop Session", {"expires_on": ["<", cutoff]})
 	frappe.db.delete("Coop Session", {"revoked": 1, "modified": ["<", cutoff]})

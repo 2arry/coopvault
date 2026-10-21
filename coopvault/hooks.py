@@ -1,5 +1,5 @@
 app_name = "coopvault"
-app_title = "CoopVault"
+app_title = "Cooperative360"
 app_publisher = "Larry Adah"
 app_description = "Cooperative savings, contributions and member loans management"
 app_email = "larryadah@gmail.com"
@@ -11,7 +11,7 @@ add_to_apps_screen = [
 	{
 		"name": "coopvault",
 		"logo": "/assets/coopvault/logo.svg",
-		"title": "CoopVault",
+		"title": "Cooperative360",
 		"route": "/desk/coopvault",
 	}
 ]

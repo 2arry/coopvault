@@ -258,6 +258,15 @@ def _record_payment(tx, method="Paystack", note=None):
 		"status": "Confirmed",
 		"reviewed_by": "Administrator",
 	}
+
+	def insert(values):
+		doc = frappe.get_doc(values)
+		# The money is already in the cooperative's account, so it's recorded whatever the
+		# member's status is now (suspended, or left and still paying into their old number)
+		doc.flags.money_received = True
+		doc.flags.payment_tx = tx
+		return doc.insert(ignore_permissions=True)
+
 	amount = flt(tx.amount)
 	docs = []
 	if tx.purpose == "Loan Repayment" and tx.loan:
@@ -265,19 +274,15 @@ def _record_payment(tx, method="Paystack", note=None):
 		repay = min(amount, flt(loan.balance)) if loan and loan.status == "Active" else 0
 		if repay > 0:
 			docs.append(
-				frappe.get_doc(
-					{"doctype": "Coop Loan Repayment", "loan": tx.loan, "amount": repay, "payment_date": today(),
-						"notes": note, **common}
-				).insert(ignore_permissions=True)
+				insert({"doctype": "Coop Loan Repayment", "loan": tx.loan, "amount": repay, "payment_date": today(),
+					"notes": note, **common})
 			)
 		amount = flt(amount - repay, 2)
 		note = _("Overpayment on loan {0}, added to savings").format(tx.loan) if amount > 0 else note
 	if amount > 0:
 		docs.append(
-			frappe.get_doc(
-				{"doctype": "Coop Contribution", "cooperative": tx.cooperative, "member": tx.member,
-					"amount": amount, "contribution_date": today(), "notes": note, **common}
-			).insert(ignore_permissions=True)
+			insert({"doctype": "Coop Contribution", "cooperative": tx.cooperative, "member": tx.member,
+				"amount": amount, "contribution_date": today(), "notes": note, **common})
 		)
 	return docs[0]
 
@@ -348,6 +353,7 @@ def _complete(reference, data, method="Paystack"):
 		frappe.log_error(title="Paystack amount mismatch", message=f"{reference}: expected {expected}, got {paid}")
 		return tx
 
+	tx.settled_amount = settled_amount(tx, data)
 	doc = _record_payment(tx, method=method)
 
 	if tx.save_method and tx.user:
@@ -362,6 +368,22 @@ def _complete(reference, data, method="Paystack"):
 	tx.save(ignore_permissions=True)
 	_notify_payment(tx, doc)
 	return tx
+
+
+def settled_amount(tx, data):
+	"""What reaches the cooperative from a successful charge: the amount charged minus Paystack's
+	fee (the cooperative's subaccount bears it) and any platform commission."""
+	charged = flt(data.get("amount")) / 100 or flt(tx.charged_amount) or flt(tx.amount)
+	split = data.get("fees_split") or {}
+	if split.get("subaccount") is not None:
+		return flt(flt(split["subaccount"]) / 100, 2)
+	commission = 0.0
+	has_subaccount = (data.get("subaccount") or {}).get("subaccount_code") or (
+		tx.cooperative and frappe.db.get_value("Cooperative", tx.cooperative, "paystack_subaccount_code")
+	)
+	if has_subaccount:
+		commission = charged * flt(paystack.settings().platform_fee_percent) / 100
+	return flt(charged - flt(data.get("fees")) / 100 - commission, 2)
 
 
 def _notify_payment(tx, doc):
@@ -847,6 +869,7 @@ def _apply_dedicated_account(email, data, ok=True):
 					"dva_account_number": acct.get("account_number"),
 					"dva_account_name": acct.get("account_name"),
 					"dva_bank_name": (acct.get("bank") or {}).get("name"),
+					"dva_id": acct.get("id"),
 					"paystack_customer_code": customer.get("customer_code"),
 					"dva_error": None,
 				},
@@ -864,18 +887,106 @@ def _apply_dedicated_account(email, data, ok=True):
 				link="/profile", kind="dva")
 
 
+def close_dedicated_account(member):
+	"""When someone leaves, switch their account number off at Paystack so later transfers bounce
+	instead of landing in a group they left. The number stays on the record, so a transfer that
+	still slips through is matched to them and can be withdrawn."""
+	m = frappe.db.get_value(
+		"Coop Member", member,
+		["name", "cooperative", "full_name", "dva_status", "dva_id", "paystack_customer_code", "dva_account_number"],
+		as_dict=True,
+	)
+	if not m or m.dva_status not in ("Assigned", "Requested"):
+		return
+	closed = False
+	if paystack.is_enabled():
+		try:
+			closed = paystack.deactivate_dedicated_account(m.dva_id, m.paystack_customer_code)
+		except Exception:
+			frappe.log_error(title="Couldn't close dedicated account", message=frappe.get_traceback())
+	frappe.db.set_value(
+		"Coop Member", member,
+		{"dva_status": "Closed", "dva_error": None if closed else _("Paystack didn't confirm the account number was switched off")},
+	)
+	if not closed and m.dva_account_number:
+		notify(
+			staff_of(m.cooperative),
+			_("{0}'s account number may still accept transfers").format(m.full_name),
+			_("They left, but Paystack didn't confirm {0} was switched off. Any transfer to it is still recorded for them.").format(
+				m.dva_account_number
+			),
+			cooperative=m.cooperative,
+			kind="payment-unmatched",
+		)
+
+
+def _member_for_account_number(number):
+	"""The membership an account number belongs to. Paystack can hand the same number back when
+	someone moves to a new group, so the live assignment wins over older, closed ones."""
+	if not number:
+		return None
+	rows = frappe.get_all(
+		"Coop Member", filters={"dva_account_number": number}, fields=["name", "dva_status"], order_by="modified desc"
+	)
+	live = [r for r in rows if r.dva_status == "Assigned"]
+	best = (live or rows)[:1]
+	return best[0].name if best else None
+
+
+def _cooperative_for_subaccount(data):
+	code = (data.get("subaccount") or {}).get("subaccount_code")
+	return code and frappe.db.get_value("Cooperative", {"paystack_subaccount_code": code})
+
+
 def _record_dedicated_transfer(data):
-	"""A transfer into a member's dedicated account becomes a confirmed contribution."""
+	"""A transfer into a member's account number becomes a confirmed contribution.
+
+	The money is already in the cooperative's account by the time Paystack tells us, so it is
+	always recorded: for a suspended or former member too (staff are told so they can return it),
+	and as an unmatched transfer when no member can be found.
+	"""
 	reference = data.get("reference")
 	if frappe.db.exists("Coop Payment Transaction", reference):
 		return _complete(reference, data, method="Bank Transfer")
 	receiver = (data.get("authorization") or {}).get("receiver_bank_account_number")
-	member = receiver and frappe.db.get_value("Coop Member", {"dva_account_number": receiver})
-	if not member:
-		frappe.log_error(title="Unmatched dedicated account transfer", message=json.dumps(data, default=str)[:5000])
-		return None
-	m = frappe.db.get_value("Coop Member", member, ["cooperative", "user"], as_dict=True)
+	member = _member_for_account_number(receiver)
 	paid = flt(data.get("amount")) / 100
+	currency = data.get("currency") or "NGN"
+	if not member:
+		cooperative = _cooperative_for_subaccount(data)
+		tx = frappe.get_doc(
+			{
+				"doctype": "Coop Payment Transaction",
+				"reference": reference,
+				"purpose": "Contribution",
+				"source": "Dedicated Account",
+				"status": "Unmatched",
+				"amount": paid,
+				"charged_amount": paid,
+				"currency": currency,
+				"cooperative": cooperative,
+				"channel": data.get("channel"),
+				"paystack_fees": flt(data.get("fees")) / 100,
+				"message": _("Sent to account number {0}, which doesn't belong to any member").format(receiver or "?"),
+				"gateway_response": json.dumps(data, indent=1, default=str),
+			}
+		)
+		tx.settled_amount = settled_amount(tx, data)
+		tx.insert(ignore_permissions=True)
+		if cooperative:
+			notify(
+				staff_of(cooperative),
+				_("A transfer of {0} couldn't be matched to a member").format(money_text(paid, currency)),
+				_("Sent to account number {0}. Find out who sent it so it can be added to their savings.").format(
+					receiver or "?"
+				),
+				cooperative=cooperative,
+				kind="payment-unmatched",
+			)
+		frappe.log_error(title="Unmatched dedicated account transfer", message=json.dumps(data, default=str)[:5000])
+		return tx
+
+	m = frappe.db.get_value("Coop Member", member, ["cooperative", "user", "status", "full_name"], as_dict=True)
 	frappe.get_doc(
 		{
 			"doctype": "Coop Payment Transaction",
@@ -885,13 +996,24 @@ def _record_dedicated_transfer(data):
 			"status": "Initiated",
 			"amount": paid,
 			"charged_amount": paid,
-			"currency": data.get("currency") or "NGN",
+			"currency": currency,
 			"cooperative": m.cooperative,
 			"member": member,
 			"user": m.user,
 		}
 	).insert(ignore_permissions=True)
-	return _complete(reference, data, method="Bank Transfer")
+	tx = _complete(reference, data, method="Bank Transfer")
+	if m.status != "Active":
+		what = _("have left the group") if m.status == "Left" else _("are suspended")
+		notify(
+			staff_of(m.cooperative),
+			_("{0} sent {1} to their account number").format(m.full_name, money_text(paid, currency)),
+			_("They {0}, so it was added to what the group owes them. They can withdraw it from the app.").format(what),
+			link=f"/admin/members/{member}",
+			cooperative=m.cooperative,
+			kind="payment-inactive-member",
+		)
+	return tx
 
 
 # Banks ------------------------------------------------------------------------------

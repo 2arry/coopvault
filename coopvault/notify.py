@@ -1,6 +1,6 @@
 """In-app notifications, with Web Push to phones that installed the app and allowed it.
 
-No email or SMS: everything a member needs to act on lands in their CoopVault inbox, and
+No email or SMS: everything a member needs to act on lands in their Cooperative360 inbox, and
 browsers/phones that subscribed also get a push message.
 """
 
@@ -9,6 +9,9 @@ import hashlib
 import json
 
 import frappe
+from frappe import _
+
+DISCREET_TITLE = "Cooperative360"
 
 STAFF_ROLES = ("Admin", "Treasurer")
 
@@ -100,13 +103,23 @@ def send_push(users, payload):
 	vapid = Vapid01.from_pem(pem.encode())
 	claims = {"sub": settings.vapid_subject or frappe.utils.get_url()}  # Apple rejects placeholder subjects
 	subs = frappe.get_all(
-		"Coop Push Subscription", filters={"user": ["in", users]}, fields=["name", "endpoint", "p256dh", "auth"]
+		"Coop Push Subscription", filters={"user": ["in", users]},
+		fields=["name", "endpoint", "p256dh", "auth", "session", "discreet"],
 	)
+	from coopvault.sessions import ended as ended_sessions
+
+	ended = ended_sessions([s.session for s in subs])
 	for sub in subs:
+		if sub.session in ended:
+			frappe.db.delete("Coop Push Subscription", sub.name)
+			continue
+		body = payload
+		if sub.discreet:
+			body = {**payload, "title": DISCREET_TITLE, "body": _("You have a new update. Open the app to see it.")}
 		try:
 			webpush(
 				subscription_info={"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}},
-				data=json.dumps(payload),
+				data=json.dumps(body),
 				vapid_private_key=vapid,
 				vapid_claims=dict(claims),
 				ttl=24 * 60 * 60,
