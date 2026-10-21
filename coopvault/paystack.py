@@ -185,6 +185,12 @@ def split_name(full_name):
 	return parts[0], " ".join(parts[1:]) or parts[0]
 
 
+def dedicated_account_provider():
+	"""Live keys use the configured provider; test keys must use Paystack's test-bank."""
+	provider = settings().dedicated_account_bank or "wema-bank"
+	return "test-bank" if is_test_mode() else provider
+
+
 def assign_dedicated_account(user, subaccount=None, bank_code=None, account_number=None, bvn=None):
 	"""Ask Paystack to create a customer and a dedicated account for them (result arrives by webhook)."""
 	u = frappe.db.get_value("User", user, ["email", "full_name", "mobile_no"], as_dict=True)
@@ -194,7 +200,7 @@ def assign_dedicated_account(user, subaccount=None, bank_code=None, account_numb
 		"first_name": first,
 		"last_name": last,
 		"phone": u.mobile_no,
-		"preferred_bank": settings().dedicated_account_bank or ("test-bank" if is_test_mode() else "wema-bank"),
+		"preferred_bank": dedicated_account_provider(),
 		"country": "NG",
 	}
 	if subaccount:
