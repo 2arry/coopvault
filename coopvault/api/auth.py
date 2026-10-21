@@ -68,7 +68,10 @@ def _tracker(key):
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
-@rate_limit(limit=20, seconds=60 * 5)
+# Per account first; the per-IP ceiling is high because Nigerian mobile networks put many people
+# behind one IP (a whole meeting logging in at once must not lock each other out).
+@rate_limit(key="email", ip_based=False, limit=10, seconds=60 * 5)
+@rate_limit(limit=100, seconds=60 * 5)
 def login(email, password):
 	user = _resolve_user(email)
 	tracker = _tracker(user or (email or "").strip().lower())
@@ -88,7 +91,7 @@ def login(email, password):
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
-@rate_limit(limit=20, seconds=60 * 10)
+@rate_limit(limit=60, seconds=60 * 10)  # per IP; shared mobile IPs, see login
 def signup(full_name, email, password, phone=None):
 	if not frappe.db.get_single_value("CoopVault Settings", "allow_signup"):
 		frappe.throw(_("Sign up is closed. Ask your cooperative admin for an account."))
