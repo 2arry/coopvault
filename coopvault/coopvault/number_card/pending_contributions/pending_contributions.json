@@ -1,0 +1,23 @@
+{
+ "color": "#b45309",
+ "creation": "2026-10-21 01:13:31.085845",
+ "docstatus": 0,
+ "doctype": "Number Card",
+ "document_type": "Coop Contribution",
+ "filters_json": "[[\"Coop Contribution\", \"status\", \"=\", \"Pending\"]]",
+ "function": "Count",
+ "idx": 0,
+ "is_public": 1,
+ "is_standard": 1,
+ "label": "Pending Contributions",
+ "modified": "2026-10-21 01:13:31.085845",
+ "modified_by": "Administrator",
+ "module": "CoopVault",
+ "name": "Pending Contributions",
+ "owner": "Administrator",
+ "report_function": "Sum",
+ "show_full_number": 0,
+ "show_percentage_stats": 0,
+ "stats_time_interval": "Daily",
+ "type": "Document Type"
+}

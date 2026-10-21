@@ -10,6 +10,7 @@ def before_install():
 def after_install():
 	make_roles()
 	setup_settings()
+	set_defaults()
 
 
 def after_migrate():
@@ -30,3 +31,12 @@ def setup_settings():
 	webhook = frappe.utils.get_url("/api/method/coopvault.api.payments.paystack_webhook")
 	if settings.webhook_url != webhook:
 		settings.db_set("webhook_url", webhook)
+
+
+def set_defaults():
+	"""Sensible regional defaults for a fresh site; never overrides choices already made."""
+	settings = frappe.get_single("System Settings")
+	if not settings.time_zone:
+		settings.db_set("time_zone", "Africa/Lagos")
+	if not settings.country:
+		settings.db_set("country", "Nigeria")

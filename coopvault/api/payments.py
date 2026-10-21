@@ -1,167 +1,211 @@
-"""Paystack online payments for contributions and loan repayments.
+"""Online payments through Paystack.
 
-Flow: the PWA calls `initialize`, redirects the member to Paystack's checkout page,
-Paystack redirects back to `<frontend_url>/pay/callback?reference=...` and the PWA
-calls `verify`. The webhook does the same verification server-to-server so a payment
-is recorded even if the member closes the browser before returning.
+Checkout: the PWA calls `initialize`, opens Paystack's popup (InlineJS v2) with the returned
+access code and calls `verify` when it closes. Paystack's redirect callback and the webhook
+lead to the same idempotent `_complete`, so a payment is recorded exactly once whichever
+path arrives first.
+
+Also here: saved payment methods (cards and direct-debit mandates), Autosave (scheduled
+contributions charged to a saved method), dedicated virtual accounts (a personal account
+number per member; transfers into it become contributions automatically), and bank lookup.
 """
 
-import hashlib
-import hmac
 import json
 
 import frappe
-import requests
 from frappe import _
-from frappe.utils import flt, fmt_money, today
+from frappe.utils import add_days, add_months, cint, flt, fmt_money, get_datetime, getdate, now_datetime, today
 
-from coopvault.api import get_membership
+from coopvault import paystack
+from coopvault.api import get_membership, require_login
+from coopvault.ledger import contribution_standing
 
-PAYSTACK_API = "https://api.paystack.co"
-
-
-def _settings():
-	s = frappe.get_cached_doc("CoopVault Settings")
-	secret = s.get_password("paystack_secret_key", raise_exception=False) if s.paystack_enabled else None
-	return s, secret
+MIN_ONLINE_AMOUNT = 100
+AUTOSAVE_MAX_FAILURES = 3
 
 
-def _paystack(method, path, secret, **kwargs):
-	try:
-		res = requests.request(
-			method,
-			PAYSTACK_API + path,
-			headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"},
-			timeout=30,
-			**kwargs,
-		)
-		return res.json()
-	except Exception:
-		frappe.log_error(title="Paystack request failed", message=frappe.get_traceback())
-		frappe.throw(_("Could not reach Paystack. Please try again."))
+def _frontend_url(path=""):
+	base = (frappe.db.get_single_value("CoopVault Settings", "frontend_url") or "").rstrip("/")
+	return base + path
+
+
+def _coop(cooperative):
+	return frappe.db.get_value(
+		"Cooperative",
+		cooperative,
+		["name", "cooperative_name", "currency", "accept_online_payments", "fee_bearer", "paystack_subaccount_code",
+			"contribution_frequency"],
+		as_dict=True,
+	)
+
+
+def _new_reference():
+	return "CV-" + frappe.generate_hash(length=16).upper()
+
+
+def _fee_for(coop, amount):
+	return paystack.checkout_fee(amount) if coop.fee_bearer == "Member" else 0.0
+
+
+def _split(coop):
+	if coop.paystack_subaccount_code:
+		return {"subaccount": coop.paystack_subaccount_code, "bearer": "subaccount"}
+	return {}
+
+
+# Config ---------------------------------------------------------------------------
 
 
 @frappe.whitelist(allow_guest=True)
-def config():
-	s, secret = _settings()
-	return {"enabled": bool(s.paystack_enabled and secret), "public_key": s.paystack_public_key}
+def config(cooperative=None):
+	s = paystack.settings()
+	enabled = paystack.is_enabled()
+	data = {
+		"enabled": enabled,
+		"public_key": s.paystack_public_key if enabled else None,
+		"test_mode": paystack.is_test_mode() if enabled else False,
+		"autosave": bool(enabled and s.enable_autosave),
+		"direct_debit": bool(enabled and s.enable_direct_debit),
+		"dedicated_accounts": bool(enabled and s.enable_dedicated_accounts),
+	}
+	if cooperative and frappe.session.user != "Guest":
+		get_membership(cooperative, allow_inactive=True)
+		coop = _coop(cooperative)
+		data.update(
+			online=bool(enabled and coop.accept_online_payments),
+			fee_bearer=coop.fee_bearer,
+			settles_to_cooperative=bool(coop.paystack_subaccount_code),
+		)
+	return data
+
+
+@frappe.whitelist()
+def quote(cooperative, amount):
+	get_membership(cooperative)
+	coop = _coop(cooperative)
+	amount = flt(amount, 2)
+	fee = _fee_for(coop, amount)
+	return {"amount": amount, "fee": fee, "total": flt(amount + fee, 2), "fee_bearer": coop.fee_bearer}
+
+
+# Checkout -------------------------------------------------------------------------
+
+
+def _check_repayment(me, loan, amount, currency):
+	ln = frappe.db.get_value("Coop Loan", loan, ["member", "status", "balance"], as_dict=True)
+	if not ln or ln.member != me.name:
+		frappe.throw(_("Loan not found"))
+	if ln.status != "Active":
+		frappe.throw(_("This loan is not active"))
+	if amount > flt(ln.balance) + 0.005:
+		frappe.throw(_("Amount exceeds the loan balance of {0}").format(fmt_money(ln.balance, currency=currency)))
 
 
 @frappe.whitelist(methods=["POST"])
-def initialize(cooperative, purpose, amount, loan=None):
-	s, secret = _settings()
-	if not secret:
+def initialize(cooperative, purpose, amount, loan=None, save_method=0, setup_autosave=0):
+	if not paystack.is_enabled():
 		frappe.throw(_("Online payment is not enabled. Record a bank transfer instead."))
-
 	me = get_membership(cooperative)
 	if not me.name:
 		frappe.throw(_("Only members can pay"))
-	amount = flt(amount, 2)
-	if amount < 100:
-		frappe.throw(_("Minimum online payment is 100"))
+	coop = _coop(cooperative)
+	if not coop.accept_online_payments:
+		frappe.throw(_("{0} is not accepting online payments").format(coop.cooperative_name))
 
-	currency = frappe.db.get_value("Cooperative", cooperative, "currency") or "NGN"
+	amount = flt(amount, 2)
+	if amount < MIN_ONLINE_AMOUNT:
+		frappe.throw(_("Minimum online payment is {0}").format(fmt_money(MIN_ONLINE_AMOUNT, currency=coop.currency)))
 	if purpose == "Loan Repayment":
-		ln = frappe.db.get_value("Coop Loan", loan, ["member", "status", "balance"], as_dict=True)
-		if not ln or ln.member != me.name:
-			frappe.throw(_("Loan not found"))
-		if ln.status != "Active":
-			frappe.throw(_("This loan is not active"))
-		if amount > flt(ln.balance) + 0.005:
-			frappe.throw(_("Amount exceeds the loan balance of {0}").format(fmt_money(ln.balance, currency=currency)))
-	elif purpose != "Contribution":
+		_check_repayment(me, loan, amount, coop.currency)
+	elif purpose == "Contribution":
+		loan = None
+	else:
 		frappe.throw(_("Invalid payment purpose"))
 
-	reference = "CV-" + frappe.generate_hash(length=16).upper()
+	setup_autosave = cint(setup_autosave) and purpose == "Contribution"
+	save_method = cint(save_method) or setup_autosave
+	fee = _fee_for(coop, amount)
+	total = flt(amount + fee, 2)
+	reference = _new_reference()
 	email = frappe.db.get_value("User", me.user, "email")
-	callback = (s.frontend_url or "").rstrip("/") + "/pay/callback"
 
-	res = _paystack(
-		"POST",
-		"/transaction/initialize",
-		secret,
-		json={
-			"email": email,
-			"amount": int(round(amount * 100)),
-			"currency": currency,
-			"reference": reference,
-			"callback_url": callback,
-			"metadata": {"cooperative": cooperative, "purpose": purpose, "loan": loan, "member": me.name},
+	body = {
+		"email": email,
+		"amount": paystack.to_subunit(total),
+		"currency": coop.currency,
+		"reference": reference,
+		"callback_url": _frontend_url("/pay/callback"),
+		"metadata": {
+			"cooperative": cooperative,
+			"purpose": purpose,
+			"loan": loan,
+			"member": me.name,
+			"cancel_action": _frontend_url(f"/pay/callback?reference={reference}&cancelled=1"),
+			"custom_fields": [
+				{"display_name": "Cooperative", "variable_name": "cooperative", "value": coop.cooperative_name},
+				{"display_name": "Member", "variable_name": "member", "value": me.full_name},
+				{"display_name": "For", "variable_name": "purpose", "value": purpose},
+			],
 		},
-	)
-	if not res.get("status"):
-		frappe.log_error(title="Paystack initialize failed", message=json.dumps(res))
-		frappe.throw(res.get("message") or _("Could not start the payment"))
+		**_split(coop),
+	}
+	if save_method:
+		# Only cards give a reusable authorization straight from checkout
+		body["channels"] = ["card"]
 
+	data = paystack.initialize_transaction(**body)
 	frappe.get_doc(
 		{
 			"doctype": "Coop Payment Transaction",
 			"reference": reference,
 			"purpose": purpose,
+			"source": "Checkout",
 			"status": "Initiated",
 			"amount": amount,
-			"currency": currency,
+			"fee": fee,
+			"charged_amount": total,
+			"currency": coop.currency,
 			"cooperative": cooperative,
 			"member": me.name,
 			"user": me.user,
-			"loan": loan if purpose == "Loan Repayment" else None,
-			"authorization_url": res["data"]["authorization_url"],
+			"loan": loan,
+			"save_method": save_method,
+			"setup_autosave": setup_autosave,
+			"access_code": data.get("access_code"),
+			"authorization_url": data.get("authorization_url"),
 		}
 	).insert(ignore_permissions=True)
-	return {"reference": reference, "authorization_url": res["data"]["authorization_url"]}
-
-
-def _complete(reference, data):
-	"""Record the contribution/repayment for a verified successful transaction (idempotent)."""
-	tx = frappe.get_doc("Coop Payment Transaction", reference, for_update=True)
-	if tx.status == "Success":
-		return tx
-
-	paid = flt(data.get("amount")) / 100
-	tx.gateway_response = json.dumps(data, indent=1, default=str)
-
-	if data.get("status") != "success":
-		tx.status = "Abandoned" if data.get("status") == "abandoned" else "Failed"
-		tx.save(ignore_permissions=True)
-		return tx
-	if abs(paid - flt(tx.amount)) > 0.01 or (data.get("currency") or tx.currency) != tx.currency:
-		tx.status = "Failed"
-		tx.save(ignore_permissions=True)
-		frappe.log_error(title="Paystack amount mismatch", message=f"{reference}: expected {tx.amount}, got {paid}")
-		return tx
-
-	common = {
-		"amount": paid,
-		"payment_method": "Paystack",
+	return {
 		"reference": reference,
-		"status": "Confirmed",
-		"reviewed_by": "Administrator",
+		"access_code": data.get("access_code"),
+		"authorization_url": data.get("authorization_url"),
+		"amount": amount,
+		"fee": fee,
+		"total": total,
 	}
-	if tx.purpose == "Contribution":
-		doc = frappe.get_doc(
-			{
-				"doctype": "Coop Contribution",
-				"cooperative": tx.cooperative,
-				"member": tx.member,
-				"contribution_date": today(),
-				**common,
-			}
-		)
-	else:
-		doc = frappe.get_doc(
-			{"doctype": "Coop Loan Repayment", "loan": tx.loan, "payment_date": today(), **common}
-		)
-	doc.flags.ignore_permissions = True
-	doc.insert(ignore_permissions=True)
-
-	tx.status = "Success"
-	tx.reference_doctype = doc.doctype
-	tx.reference_name = doc.name
-	tx.save(ignore_permissions=True)
-	return tx
 
 
-@frappe.whitelist()
+def _tx_summary(tx):
+	return {
+		"reference": tx.reference,
+		"status": tx.status,
+		"purpose": tx.purpose,
+		"source": tx.source,
+		"amount": tx.amount,
+		"fee": tx.fee,
+		"charged_amount": tx.charged_amount,
+		"currency": tx.currency,
+		"cooperative": tx.cooperative,
+		"loan": tx.loan,
+		"channel": tx.channel,
+		"message": tx.message,
+		"document_type": tx.reference_doctype,
+		"document": tx.reference_name,
+		"autosave": bool(tx.setup_autosave),
+	}
+
+
+@frappe.whitelist(methods=["POST"])
 def verify(reference):
 	tx = frappe.db.get_value(
 		"Coop Payment Transaction", reference, ["name", "user", "status", "cooperative"], as_dict=True
@@ -172,47 +216,578 @@ def verify(reference):
 	if tx.user != me.user and not me.is_admin:
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 
-	if tx.status != "Success":
-		_, secret = _settings()
-		res = _paystack("GET", f"/transaction/verify/{reference}", secret)
-		if res.get("status") and res.get("data"):
-			_complete(reference, res["data"])
+	if tx.status not in ("Success", "Failed"):
+		data = paystack.verify_transaction(reference)
+		if data:
+			_complete(reference, data)
+	return _tx_summary(frappe.get_doc("Coop Payment Transaction", reference))
 
+
+@frappe.whitelist(methods=["POST"])
+def mark_abandoned(reference):
+	"""Called when the member closes the popup without paying."""
 	tx = frappe.get_doc("Coop Payment Transaction", reference)
-	return {
+	if tx.user != require_login():
+		frappe.throw(_("Not permitted"), frappe.PermissionError)
+	if tx.status == "Initiated":
+		tx.db_set("status", "Abandoned")
+	return {"ok": True}
+
+
+def _record_payment(tx, method="Paystack", note=None):
+	"""Create the confirmed contribution / repayment for a successful transaction.
+
+	A repayment larger than what is still owed (e.g. the loan was settled another way in
+	the meantime) is split: the balance clears the loan and the rest is saved, so money that
+	reached the cooperative is never left unrecorded.
+	"""
+	common = {
+		"payment_method": method,
 		"reference": tx.reference,
-		"status": tx.status,
-		"purpose": tx.purpose,
-		"amount": tx.amount,
-		"currency": tx.currency,
-		"cooperative": tx.cooperative,
-		"loan": tx.loan,
-		"document": tx.reference_name,
+		"status": "Confirmed",
+		"reviewed_by": "Administrator",
 	}
+	amount = flt(tx.amount)
+	docs = []
+	if tx.purpose == "Loan Repayment" and tx.loan:
+		loan = frappe.db.get_value("Coop Loan", tx.loan, ["status", "balance"], as_dict=True)
+		repay = min(amount, flt(loan.balance)) if loan and loan.status == "Active" else 0
+		if repay > 0:
+			docs.append(
+				frappe.get_doc(
+					{"doctype": "Coop Loan Repayment", "loan": tx.loan, "amount": repay, "payment_date": today(),
+						"notes": note, **common}
+				).insert(ignore_permissions=True)
+			)
+		amount = flt(amount - repay, 2)
+		note = _("Overpayment on loan {0}, added to savings").format(tx.loan) if amount > 0 else note
+	if amount > 0:
+		docs.append(
+			frappe.get_doc(
+				{"doctype": "Coop Contribution", "cooperative": tx.cooperative, "member": tx.member,
+					"amount": amount, "contribution_date": today(), "notes": note, **common}
+			).insert(ignore_permissions=True)
+		)
+	return docs[0]
+
+
+def _save_authorization(user, data, reference=None):
+	auth = data.get("authorization") or {}
+	code = auth.get("authorization_code")
+	if not auth.get("reusable") or not code:
+		return None
+	signature = auth.get("signature") or code
+	existing = frappe.db.get_value(
+		"Coop Payment Authorization", {"user": user, "signature": signature, "status": "Active"}
+	)
+	if existing:
+		return existing
+	customer = data.get("customer") or {}
+	channel = auth.get("channel") if auth.get("channel") in ("card", "direct_debit", "bank") else "card"
+	brand = (auth.get("brand") or auth.get("card_type") or "").strip()
+	label = (
+		f"{brand.title()} •••• {auth.get('last4')}" if channel == "card" and auth.get("last4") else auth.get("bank")
+	)
+	doc = frappe.get_doc(
+		{
+			"doctype": "Coop Payment Authorization",
+			"user": user,
+			"label": label or _("Saved payment method"),
+			"channel": channel,
+			"status": "Active",
+			"reference": reference,
+			"authorization_code": code,
+			"signature": signature,
+			"customer_code": customer.get("customer_code") or customer.get("code"),
+			"email": customer.get("email") or frappe.db.get_value("User", user, "email"),
+			"brand": brand,
+			"bank": auth.get("bank"),
+			"last4": auth.get("last4"),
+			"exp_month": cint(auth.get("exp_month")),
+			"exp_year": cint(auth.get("exp_year")),
+			"account_name": auth.get("account_name"),
+		}
+	).insert(ignore_permissions=True)
+	return doc.name
+
+
+def _complete(reference, data, method="Paystack"):
+	"""Apply a verified Paystack transaction (idempotent)."""
+	tx = frappe.get_doc("Coop Payment Transaction", reference, for_update=True)
+	if tx.status == "Success":
+		return tx
+
+	tx.gateway_response = json.dumps(data, indent=1, default=str)
+	tx.channel = data.get("channel")
+	tx.paystack_fees = flt(data.get("fees")) / 100
+	status = data.get("status")
+	if status != "success":
+		if status in ("abandoned", "failed", "reversed"):
+			tx.status = "Abandoned" if status == "abandoned" else "Failed"
+			tx.message = data.get("gateway_response") or data.get("message")
+		tx.save(ignore_permissions=True)
+		return tx
+
+	paid = flt(data.get("amount")) / 100
+	expected = flt(tx.charged_amount) or flt(tx.amount)
+	if paid + 0.01 < expected or (data.get("currency") or tx.currency) != tx.currency:
+		tx.status = "Failed"
+		tx.message = _("Paid amount {0} does not match the expected {1}").format(paid, expected)
+		tx.save(ignore_permissions=True)
+		frappe.log_error(title="Paystack amount mismatch", message=f"{reference}: expected {expected}, got {paid}")
+		return tx
+
+	doc = _record_payment(tx, method=method)
+
+	if tx.save_method and tx.user:
+		tx.authorization = _save_authorization(tx.user, data, reference)
+		if tx.setup_autosave and tx.authorization:
+			_enable_autosave(tx.member, flt(tx.amount), tx.authorization, from_payment=True)
+
+	tx.status = "Success"
+	tx.paid_at = get_datetime(data["paid_at"][:19].replace("T", " ")) if data.get("paid_at") else now_datetime()
+	tx.reference_doctype = doc.doctype
+	tx.reference_name = doc.name
+	tx.save(ignore_permissions=True)
+	return tx
+
+
+# Saved payment methods ------------------------------------------------------------
+
+
+def _method_row(a):
+	return {
+		"name": a.name,
+		"label": a.label,
+		"channel": a.channel,
+		"status": a.status,
+		"brand": a.brand,
+		"bank": a.bank,
+		"last4": a.last4,
+		"exp_month": a.exp_month,
+		"exp_year": a.exp_year,
+	}
+
+
+@frappe.whitelist()
+def list_methods():
+	user = require_login()
+	rows = frappe.get_all(
+		"Coop Payment Authorization",
+		filters={"user": user, "status": "Active"},
+		fields=["name", "label", "channel", "status", "brand", "bank", "last4", "exp_month", "exp_year"],
+		order_by="creation desc",
+	)
+	return [_method_row(r) for r in rows]
+
+
+@frappe.whitelist(methods=["POST"])
+def remove_method(name):
+	doc = frappe.get_doc("Coop Payment Authorization", name)
+	if doc.user != require_login():
+		frappe.throw(_("Not permitted"), frappe.PermissionError)
+	code = doc.get_password("authorization_code", raise_exception=False)
+	if code and paystack.is_enabled():
+		paystack.deactivate_authorization(code)
+	doc.db_set("status", "Inactive")
+	for m in frappe.get_all("Coop Member", filters={"autosave_authorization": name}, pluck="name"):
+		_disable_autosave(m, _("The saved payment method was removed"))
+	return {"ok": True}
+
+
+@frappe.whitelist(methods=["POST"])
+def start_mandate(cooperative):
+	"""Begin a direct-debit mandate: the member authorises their bank account on Paystack."""
+	if not (paystack.is_enabled() and paystack.settings().enable_direct_debit):
+		frappe.throw(_("Direct debit is not available"))
+	me = get_membership(cooperative)
+	email = frappe.db.get_value("User", me.user, "email")
+	data = paystack.initialize_mandate(email, _frontend_url(f"/autosave?coop={cooperative}&mandate=1"))
+	frappe.get_doc(
+		{
+			"doctype": "Coop Payment Authorization",
+			"user": me.user,
+			"email": email,
+			"label": _("Bank account (direct debit)"),
+			"channel": "direct_debit",
+			"status": "Pending",
+			"reference": data.get("reference"),
+		}
+	).insert(ignore_permissions=True)
+	return {"redirect_url": data.get("redirect_url"), "reference": data.get("reference")}
+
+
+def _activate_mandate(auth_name, data):
+	doc = frappe.get_doc("Coop Payment Authorization", auth_name)
+	customer = data.get("customer") or {}
+	doc.update(
+		{
+			"authorization_code": data.get("authorization_code"),
+			"signature": data.get("signature") or data.get("authorization_code"),
+			"customer_code": customer.get("code") or customer.get("customer_code"),
+			"bank": data.get("bank"),
+			"last4": data.get("last4"),
+			"account_name": data.get("account_name"),
+			"label": _("{0} (direct debit)").format(data.get("bank") or _("Bank account")),
+			"status": "Active" if data.get("active") else "Pending",
+		}
+	)
+	doc.save(ignore_permissions=True)
+	return doc
+
+
+@frappe.whitelist(methods=["POST"])
+def check_mandate(reference):
+	auth = frappe.db.get_value(
+		"Coop Payment Authorization", {"reference": reference}, ["name", "user", "status"], as_dict=True
+	)
+	if not auth or auth.user != require_login():
+		frappe.throw(_("Mandate not found"))
+	if auth.status == "Pending":
+		data = paystack.verify_mandate(reference)
+		if data and data.get("authorization_code"):
+			_activate_mandate(auth.name, data)
+	doc = frappe.get_doc("Coop Payment Authorization", auth.name)
+	return _method_row(doc)
+
+
+# Autosave -------------------------------------------------------------------------
+
+
+def _next_autosave_date(member, frequency, after=None):
+	"""Charge on the day the next unpaid period is due (today if one is due now)."""
+	if after:
+		after = getdate(after)
+		return add_days(after, 7) if frequency == "Weekly" else getdate(
+			add_months(after, 3 if frequency == "Quarterly" else 1)
+		)
+	standing = contribution_standing(member)
+	if standing.get("tracked") and standing.state == "up_to_date":
+		return getdate(standing.next_due_date)
+	return getdate(today())
+
+
+def _enable_autosave(member, amount, authorization, start_date=None, from_payment=False):
+	m = frappe.db.get_value("Coop Member", member, ["name", "cooperative"], as_dict=True)
+	frequency = frappe.db.get_value("Cooperative", m.cooperative, "contribution_frequency")
+	frequency = frequency if frequency in ("Weekly", "Monthly", "Quarterly") else "Monthly"
+	if start_date:
+		next_date = getdate(start_date)
+	elif from_payment:
+		# The payment that set this up already covered the current period
+		next_date = _next_autosave_date(member, frequency, after=today())
+	else:
+		next_date = _next_autosave_date(member, frequency)
+	frappe.db.set_value(
+		"Coop Member",
+		member,
+		{
+			"autosave_enabled": 1,
+			"autosave_amount": amount,
+			"autosave_authorization": authorization,
+			"autosave_next_date": next_date,
+			"autosave_failures": 0,
+			"autosave_last_error": None,
+		},
+	)
+	return next_date
+
+
+def _disable_autosave(member, reason=None):
+	frappe.db.set_value(
+		"Coop Member", member, {"autosave_enabled": 0, "autosave_next_date": None, "autosave_last_error": reason}
+	)
+
+
+def autosave_status(member):
+	m = frappe.db.get_value(
+		"Coop Member",
+		member,
+		["autosave_enabled", "autosave_amount", "autosave_authorization", "autosave_next_date",
+			"autosave_last_error"],
+		as_dict=True,
+	)
+	method = None
+	if m.autosave_authorization:
+		a = frappe.db.get_value(
+			"Coop Payment Authorization", m.autosave_authorization,
+			["name", "label", "channel", "status", "brand", "bank", "last4", "exp_month", "exp_year"], as_dict=True,
+		)
+		method = _method_row(a) if a else None
+	return {
+		"enabled": bool(m.autosave_enabled),
+		"amount": m.autosave_amount,
+		"next_date": m.autosave_next_date,
+		"last_error": m.autosave_last_error,
+		"method": method,
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def setup_autosave(cooperative, amount, authorization, start_date=None):
+	if not paystack.is_enabled() or not paystack.settings().enable_autosave:
+		frappe.throw(_("Autosave is not available"))
+	me = get_membership(cooperative)
+	amount = flt(amount, 2)
+	if amount < MIN_ONLINE_AMOUNT:
+		frappe.throw(_("Autosave amount is too small"))
+	auth = frappe.db.get_value("Coop Payment Authorization", authorization, ["user", "status"], as_dict=True)
+	if not auth or auth.user != me.user or auth.status != "Active":
+		frappe.throw(_("Choose an active saved payment method"))
+	if start_date and getdate(start_date) < getdate(today()):
+		frappe.throw(_("Start date cannot be in the past"))
+	_enable_autosave(me.name, amount, authorization, start_date)
+	return autosave_status(me.name)
+
+
+@frappe.whitelist(methods=["POST"])
+def cancel_autosave(cooperative):
+	me = get_membership(cooperative, allow_inactive=True)
+	_disable_autosave(me.name)
+	return autosave_status(me.name)
+
+
+@frappe.whitelist()
+def get_autosave(cooperative):
+	me = get_membership(cooperative)
+	return {"autosave": autosave_status(me.name), "methods": list_methods()}
+
+
+def charge_autosave(member):
+	"""Charge one member's autosave contribution. Returns the transaction."""
+	m = frappe.get_doc("Coop Member", member)
+	auth = frappe.get_doc("Coop Payment Authorization", m.autosave_authorization)
+	if m.status != "Active" or auth.status != "Active":
+		_disable_autosave(member, _("Membership or payment method is no longer active"))
+		return None
+	coop = _coop(m.cooperative)
+	amount = flt(m.autosave_amount)
+	fee = _fee_for(coop, amount)
+	reference = _new_reference()
+	tx = frappe.get_doc(
+		{
+			"doctype": "Coop Payment Transaction",
+			"reference": reference,
+			"purpose": "Contribution",
+			"source": "Autosave",
+			"status": "Initiated",
+			"amount": amount,
+			"fee": fee,
+			"charged_amount": flt(amount + fee, 2),
+			"currency": coop.currency,
+			"cooperative": m.cooperative,
+			"member": member,
+			"user": m.user,
+			"authorization": auth.name,
+		}
+	).insert(ignore_permissions=True)
+	frappe.db.commit()  # the webhook may arrive before this request finishes
+
+	res = paystack.charge_authorization(
+		email=auth.email,
+		amount=paystack.to_subunit(amount + fee),
+		authorization_code=auth.get_password("authorization_code"),
+		reference=reference,
+		currency=coop.currency,
+		metadata=json.dumps({"cooperative": m.cooperative, "member": member, "purpose": "Contribution", "autosave": 1}),
+		**_split(coop),
+	)
+	data = res.get("data") or {}
+	frequency = coop.contribution_frequency if coop.contribution_frequency in ("Weekly", "Monthly", "Quarterly") else "Monthly"
+	if res.get("status") and data.get("status") == "success":
+		_complete(reference, data)
+	elif res.get("status") and data.get("status") in ("pending", "ongoing", "processing", "queued"):
+		tx.db_set("status", "Pending")
+	else:
+		message = data.get("gateway_response") or res.get("message") or _("The charge was declined")
+		tx.db_set({"status": "Failed", "message": message})
+		failures = cint(m.autosave_failures) + 1
+		if failures >= AUTOSAVE_MAX_FAILURES:
+			_disable_autosave(member, _("Stopped after {0} failed attempts: {1}").format(failures, message))
+		else:
+			frappe.db.set_value("Coop Member", member, {"autosave_failures": failures, "autosave_last_error": message})
+		return tx
+
+	frappe.db.set_value(
+		"Coop Member",
+		member,
+		{
+			"autosave_next_date": _next_autosave_date(member, frequency, after=m.autosave_next_date or today()),
+			"autosave_failures": 0,
+			"autosave_last_error": None,
+		},
+	)
+	return tx
+
+
+def run_autosave():
+	"""Daily scheduler job."""
+	if not paystack.is_enabled() or not paystack.settings().enable_autosave:
+		return
+	due = frappe.get_all(
+		"Coop Member",
+		filters={"autosave_enabled": 1, "status": "Active", "autosave_next_date": ["<=", today()]},
+		pluck="name",
+	)
+	for member in due:
+		try:
+			charge_autosave(member)
+			frappe.db.commit()
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=f"Autosave failed for {member}", message=frappe.get_traceback())
+
+
+# Dedicated virtual accounts --------------------------------------------------------
+
+
+def dedicated_account_status(member):
+	m = frappe.db.get_value(
+		"Coop Member", member,
+		["dva_status", "dva_account_number", "dva_account_name", "dva_bank_name", "dva_error"], as_dict=True,
+	)
+	return {
+		"status": m.dva_status or None,
+		"account_number": m.dva_account_number,
+		"account_name": m.dva_account_name,
+		"bank_name": m.dva_bank_name,
+		"error": m.dva_error,
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def request_dedicated_account(cooperative, bvn=None):
+	if not (paystack.is_enabled() and paystack.settings().enable_dedicated_accounts):
+		frappe.throw(_("Dedicated accounts are not available"))
+	me = get_membership(cooperative)
+	if not frappe.db.get_value("User", me.user, "mobile_no"):
+		frappe.throw(_("Add your phone number in your profile first"))
+	m = frappe.db.get_value(
+		"Coop Member", me.name, ["dva_status", "payout_bank_code", "payout_account_number"], as_dict=True
+	)
+	if m.dva_status == "Assigned":
+		return dedicated_account_status(me.name)
+	coop = _coop(cooperative)
+	paystack.assign_dedicated_account(
+		me.user,
+		subaccount=coop.paystack_subaccount_code,
+		bank_code=m.payout_bank_code,
+		account_number=m.payout_account_number,
+		bvn=(bvn or "").strip() or None,
+	)
+	frappe.db.set_value("Coop Member", me.name, {"dva_status": "Requested", "dva_error": None})
+	return dedicated_account_status(me.name)
+
+
+def _apply_dedicated_account(email, data, ok=True):
+	user = frappe.db.get_value("User", {"email": email})
+	if not user:
+		return
+	members = frappe.get_all(
+		"Coop Member", filters={"user": user, "dva_status": "Requested"}, pluck="name", order_by="modified desc"
+	)
+	customer = data.get("customer") or {}
+	for member in members[:1]:
+		if ok:
+			acct = data.get("dedicated_account") or {}
+			frappe.db.set_value(
+				"Coop Member",
+				member,
+				{
+					"dva_status": "Assigned",
+					"dva_account_number": acct.get("account_number"),
+					"dva_account_name": acct.get("account_name"),
+					"dva_bank_name": (acct.get("bank") or {}).get("name"),
+					"paystack_customer_code": customer.get("customer_code"),
+					"dva_error": None,
+				},
+			)
+		else:
+			frappe.db.set_value(
+				"Coop Member",
+				member,
+				{"dva_status": "Failed", "dva_error": _("Paystack could not verify your identity for an account")},
+			)
+
+
+def _record_dedicated_transfer(data):
+	"""A transfer into a member's dedicated account becomes a confirmed contribution."""
+	reference = data.get("reference")
+	if frappe.db.exists("Coop Payment Transaction", reference):
+		return _complete(reference, data, method="Bank Transfer")
+	receiver = (data.get("authorization") or {}).get("receiver_bank_account_number")
+	member = receiver and frappe.db.get_value("Coop Member", {"dva_account_number": receiver})
+	if not member:
+		frappe.log_error(title="Unmatched dedicated account transfer", message=json.dumps(data, default=str)[:5000])
+		return None
+	m = frappe.db.get_value("Coop Member", member, ["cooperative", "user"], as_dict=True)
+	paid = flt(data.get("amount")) / 100
+	frappe.get_doc(
+		{
+			"doctype": "Coop Payment Transaction",
+			"reference": reference,
+			"purpose": "Contribution",
+			"source": "Dedicated Account",
+			"status": "Initiated",
+			"amount": paid,
+			"charged_amount": paid,
+			"currency": data.get("currency") or "NGN",
+			"cooperative": m.cooperative,
+			"member": member,
+			"user": m.user,
+		}
+	).insert(ignore_permissions=True)
+	return _complete(reference, data, method="Bank Transfer")
+
+
+# Banks ------------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def banks(currency="NGN"):
+	require_login()
+	if not paystack.is_enabled():
+		return []
+	return paystack.list_banks(currency)
+
+
+@frappe.whitelist()
+def resolve_account(bank_code, account_number):
+	require_login()
+	return {"account_name": paystack.resolve_account(account_number, bank_code)}
+
+
+# Webhook ----------------------------------------------------------------------------
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def paystack_webhook():
-	_, secret = _settings()
-	if not secret:
-		return
 	payload = frappe.request.get_data()
-	signature = frappe.get_request_header("x-paystack-signature") or ""
-	expected = hmac.new(secret.encode(), payload, hashlib.sha512).hexdigest()
-	if not hmac.compare_digest(expected, signature):
+	if not paystack.valid_signature(payload, frappe.get_request_header("x-paystack-signature") or ""):
 		frappe.local.response.http_status_code = 401
-		return
+		return {"ok": False}
 
 	event = json.loads(payload)
-	data = event.get("data") or {}
-	reference = data.get("reference")
-	if event.get("event") == "charge.success" and reference and frappe.db.exists(
-		"Coop Payment Transaction", reference
-	):
-		# Re-verify with Paystack rather than trusting the payload
-		res = _paystack("GET", f"/transaction/verify/{reference}", secret)
-		if res.get("status") and res.get("data"):
-			frappe.set_user("Administrator")
-			_complete(reference, res["data"])
-			frappe.db.commit()
+	kind, data = event.get("event"), event.get("data") or {}
+	frappe.set_user("Administrator")
+	try:
+		if kind == "charge.success" and data.get("reference"):
+			# Never trust the payload alone: re-fetch the transaction from Paystack
+			verified = paystack.verify_transaction(data["reference"])
+			if verified and verified.get("status") == "success":
+				if frappe.db.exists("Coop Payment Transaction", data["reference"]):
+					_complete(data["reference"], verified)
+				elif verified.get("channel") == "dedicated_nuban":
+					_record_dedicated_transfer(verified)
+		elif kind == "direct_debit.authorization.active":
+			name = frappe.db.get_value("Coop Payment Authorization", {"reference": data.get("reference")})
+			if name:
+				_activate_mandate(name, data)
+		elif kind in ("dedicatedaccount.assign.success", "dedicatedaccount.assign.failed"):
+			email = (data.get("customer") or {}).get("email")
+			_apply_dedicated_account(email, data, ok=kind.endswith("success"))
+		frappe.db.commit()
+	except Exception:
+		frappe.db.rollback()
+		frappe.log_error(title=f"Paystack webhook {kind} failed", message=frappe.get_traceback())
 	return {"ok": True}

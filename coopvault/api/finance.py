@@ -5,7 +5,7 @@ from frappe import _
 from frappe.utils import cint, flt, getdate, today
 
 from coopvault.api import get_membership
-from coopvault.ledger import cooperative_totals, member_balances
+from coopvault.ledger import cooperative_totals, loan_schedule, member_balances
 
 MANUAL_METHODS = ("Bank Transfer", "Cash")
 MAX_PROOF_BYTES = 5 * 1024 * 1024
@@ -215,12 +215,18 @@ def get_loan(name):
 	if loan.member != me.name and not me.is_admin:
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 	data = {f: loan.get(f) for f in LOAN_FIELDS}
+	data["cooperative"] = loan.cooperative
 	data["currency"] = frappe.db.get_value("Cooperative", loan.cooperative, "currency")
+	data["schedule"] = loan_schedule(loan)
 	data["repayments"] = frappe.get_all(
 		"Coop Loan Repayment", filters={"loan": name}, fields=REPAYMENT_FIELDS, order_by="creation desc"
 	)
 	if me.is_admin:
 		data["member_balances"] = member_balances(loan.member, exclude_loan=name if loan.status == "Pending" else None)
+		data["payout_account"] = frappe.db.get_value(
+			"Coop Member", loan.member, ["payout_bank_name", "payout_account_number", "payout_account_name"],
+			as_dict=True,
+		)
 	return data
 
 
@@ -311,6 +317,47 @@ def review_repayment(name, action, note=None):
 	_review_fields(doc, action, note)
 	doc.save(ignore_permissions=True)
 	return doc.as_dict()
+
+
+RECEIPT_DOCTYPES = {
+	"Coop Contribution": ("contribution_date", _("Savings contribution")),
+	"Coop Loan Repayment": ("payment_date", _("Loan repayment")),
+}
+
+
+@frappe.whitelist()
+def get_receipt(doctype, name):
+	"""Everything needed to show or share a receipt for one payment."""
+	if doctype not in RECEIPT_DOCTYPES:
+		frappe.throw(_("Invalid document type"))
+	doc = frappe.get_doc(doctype, name)
+	me = get_membership(doc.cooperative, allow_inactive=True)
+	if doc.member != me.name and not me.is_admin:
+		frappe.throw(_("Not permitted"), frappe.PermissionError)
+	date_field, label = RECEIPT_DOCTYPES[doctype]
+	coop = frappe.db.get_value("Cooperative", doc.cooperative, ["cooperative_name", "currency"], as_dict=True)
+	automatic = doc.status == "Confirmed" and doc.reviewed_by == "Administrator"
+	reviewer = doc.reviewed_by and not automatic and frappe.db.get_value("User", doc.reviewed_by, "full_name")
+	return {
+		"doctype": doctype,
+		"name": doc.name,
+		"kind": label,
+		"cooperative": doc.cooperative,
+		"cooperative_name": coop.cooperative_name,
+		"currency": coop.currency,
+		"member_name": doc.member_name,
+		"amount": doc.amount,
+		"date": doc.get(date_field),
+		"status": doc.status,
+		"payment_method": doc.payment_method,
+		"reference": doc.reference,
+		"loan": doc.get("loan"),
+		"notes": doc.notes,
+		"confirmed_automatically": automatic,
+		"confirmed_by": reviewer,
+		"confirmed_on": doc.reviewed_on,
+		"has_proof": bool(doc.proof),
+	}
 
 
 @frappe.whitelist()

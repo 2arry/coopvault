@@ -2,7 +2,7 @@
  "actions": [],
  "allow_rename": 0,
  "autoname": "format:COOP-{#####}",
- "creation": "2026-10-20 12:00:00.000000",
+ "creation": "2026-10-21 09:00:00.000000",
  "custom": 0,
  "doctype": "DocType",
  "editable_grid": 1,
@@ -18,16 +18,24 @@
   "rules_section",
   "contribution_amount",
   "contribution_frequency",
+  "start_date",
   "cb2",
   "loan_multiplier",
   "interest_rate",
   "max_loan_tenure_months",
   "bank_section",
   "bank_name",
+  "settlement_bank_code",
   "cb3",
   "account_number",
+  "account_verified",
   "cb4",
   "account_name",
+  "paystack_subaccount_code",
+  "online_section",
+  "accept_online_payments",
+  "cb6",
+  "fee_bearer",
   "summary_section",
   "member_count",
   "total_contributions",
@@ -106,6 +114,12 @@
    "options": "Weekly\nMonthly\nQuarterly\nFlexible"
   },
   {
+   "description": "Members owe a contribution for every period from this date (or the day they joined, if later)",
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Contributions Start"
+  },
+  {
    "fieldname": "cb2",
    "fieldtype": "Column Break"
   },
@@ -130,14 +144,21 @@
    "label": "Max Loan Tenure (Months)"
   },
   {
+   "description": "Where members send transfers, and where online payments settle",
    "fieldname": "bank_section",
    "fieldtype": "Section Break",
-   "label": "Bank Account (for manual transfers)"
+   "label": "Bank Account"
   },
   {
    "fieldname": "bank_name",
    "fieldtype": "Data",
    "label": "Bank Name"
+  },
+  {
+   "fieldname": "settlement_bank_code",
+   "fieldtype": "Data",
+   "label": "Bank Code",
+   "read_only": 1
   },
   {
    "fieldname": "cb3",
@@ -149,6 +170,12 @@
    "label": "Account Number"
   },
   {
+   "fieldname": "account_verified",
+   "fieldtype": "Check",
+   "label": "Account Verified with Paystack",
+   "read_only": 1
+  },
+  {
    "fieldname": "cb4",
    "fieldtype": "Column Break"
   },
@@ -156,6 +183,35 @@
    "fieldname": "account_name",
    "fieldtype": "Data",
    "label": "Account Name"
+  },
+  {
+   "fieldname": "paystack_subaccount_code",
+   "fieldtype": "Data",
+   "label": "Paystack Subaccount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "online_section",
+   "fieldtype": "Section Break",
+   "label": "Online Payments"
+  },
+  {
+   "default": "1",
+   "fieldname": "accept_online_payments",
+   "fieldtype": "Check",
+   "label": "Accept Online Payments"
+  },
+  {
+   "fieldname": "cb6",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Member",
+   "description": "Member: the fee is added at checkout so the full amount reaches the pool",
+   "fieldname": "fee_bearer",
+   "fieldtype": "Select",
+   "label": "Who Pays Paystack Fees",
+   "options": "Member\nCooperative"
   },
   {
    "collapsible": 1,
@@ -212,7 +268,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-20 12:00:00.000000",
+ "modified": "2026-10-21 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Cooperative",

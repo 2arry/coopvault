@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_rename": 0,
- "creation": "2026-10-20 12:00:00.000000",
+ "creation": "2026-10-21 09:00:00.000000",
  "custom": 0,
  "doctype": "DocType",
  "editable_grid": 1,
@@ -14,7 +14,20 @@
   "paystack_enabled",
   "paystack_public_key",
   "paystack_secret_key",
-  "webhook_url"
+  "webhook_url",
+  "platform_fee_percent",
+  "features_section",
+  "enable_autosave",
+  "enable_direct_debit",
+  "cb_features",
+  "enable_dedicated_accounts",
+  "dedicated_account_bank",
+  "fees_section",
+  "fee_percent",
+  "fee_flat",
+  "cb_fees",
+  "fee_flat_waived_below",
+  "fee_cap"
  ],
  "fields": [
   {
@@ -64,12 +77,93 @@
    "fieldtype": "Data",
    "label": "Webhook URL (set this in your Paystack dashboard)",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "paystack_enabled",
+   "description": "Your share of each online payment made into a cooperative's subaccount. Usually 0.",
+   "fieldname": "platform_fee_percent",
+   "fieldtype": "Percent",
+   "label": "Platform Commission"
+  },
+  {
+   "depends_on": "paystack_enabled",
+   "fieldname": "features_section",
+   "fieldtype": "Section Break",
+   "label": "Payment Features"
+  },
+  {
+   "default": "1",
+   "fieldname": "enable_autosave",
+   "fieldtype": "Check",
+   "label": "Autosave (recurring card charges)"
+  },
+  {
+   "default": "0",
+   "description": "Requires Direct Debit to be activated on your Paystack account",
+   "fieldname": "enable_direct_debit",
+   "fieldtype": "Check",
+   "label": "Direct Debit Mandates"
+  },
+  {
+   "fieldname": "cb_features",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Each member gets a personal account number; transfers into it are recorded automatically. Requires Paystack approval.",
+   "fieldname": "enable_dedicated_accounts",
+   "fieldtype": "Check",
+   "label": "Dedicated Virtual Accounts"
+  },
+  {
+   "default": "wema-bank",
+   "depends_on": "enable_dedicated_accounts",
+   "description": "Use test-bank with test keys",
+   "fieldname": "dedicated_account_bank",
+   "fieldtype": "Data",
+   "label": "Dedicated Account Provider"
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "paystack_enabled",
+   "fieldname": "fees_section",
+   "fieldtype": "Section Break",
+   "label": "Paystack Pricing (used when members pay the fee)"
+  },
+  {
+   "default": "1.5",
+   "fieldname": "fee_percent",
+   "fieldtype": "Float",
+   "label": "Percentage Fee"
+  },
+  {
+   "default": "100",
+   "fieldname": "fee_flat",
+   "fieldtype": "Currency",
+   "label": "Flat Fee"
+  },
+  {
+   "fieldname": "cb_fees",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "2500",
+   "fieldname": "fee_flat_waived_below",
+   "fieldtype": "Currency",
+   "label": "Flat Fee Waived Below"
+  },
+  {
+   "default": "2000",
+   "fieldname": "fee_cap",
+   "fieldtype": "Currency",
+   "label": "Fee Cap"
   }
  ],
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-20 12:00:00.000000",
+ "modified": "2026-10-21 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "CoopVault Settings",

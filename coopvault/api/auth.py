@@ -34,6 +34,13 @@ def get_profile(user_name=None):
 	from coopvault.api import is_super_user
 
 	u.is_super_user = is_super_user(user_name)
+	u.payout_account = frappe.db.get_value(
+		"Coop Member",
+		{"user": user_name, "payout_account_number": ["is", "set"]},
+		["payout_bank_name", "payout_bank_code", "payout_account_number", "payout_account_name"],
+		as_dict=True,
+		order_by="modified desc",
+	)
 	return u
 
 
@@ -121,6 +128,33 @@ def update_profile(full_name=None, phone=None):
 	user.save(ignore_permissions=True)
 	for m in frappe.get_all("Coop Member", filters={"user": user.name}, pluck="name"):
 		frappe.db.set_value("Coop Member", m, {"full_name": user.full_name, "phone": user.mobile_no})
+	return get_profile()
+
+
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=10, seconds=60 * 10)
+def set_payout_account(account_number, bank_code=None, bank_name=None, account_name=None):
+	"""Where the treasurer should send this member's loans. Verified with Paystack when available."""
+	from coopvault import paystack
+
+	user = require_login()
+	account_number = (account_number or "").strip()
+	if paystack.is_enabled():
+		if not bank_code:
+			frappe.throw(_("Choose your bank"))
+		account_name = paystack.resolve_account(account_number, bank_code)
+		bank_name = paystack.bank_name(bank_code) or bank_name
+	elif not (bank_name and account_number and account_name):
+		frappe.throw(_("Enter your bank, account number and account name"))
+
+	values = {
+		"payout_bank_code": bank_code,
+		"payout_bank_name": bank_name,
+		"payout_account_number": account_number,
+		"payout_account_name": account_name,
+	}
+	for m in frappe.get_all("Coop Member", filters={"user": user}, pluck="name"):
+		frappe.db.set_value("Coop Member", m, values)
 	return get_profile()
 
 

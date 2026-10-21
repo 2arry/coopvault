@@ -2,7 +2,7 @@
  "actions": [],
  "allow_rename": 0,
  "autoname": "field:reference",
- "creation": "2026-10-20 12:00:00.000000",
+ "creation": "2026-10-21 09:00:00.000000",
  "custom": 0,
  "doctype": "DocType",
  "editable_grid": 1,
@@ -11,7 +11,11 @@
   "reference",
   "purpose",
   "status",
+  "source",
   "amount",
+  "fee",
+  "charged_amount",
+  "paystack_fees",
   "currency",
   "cb1",
   "cooperative",
@@ -21,6 +25,13 @@
   "reference_doctype",
   "reference_name",
   "gateway_section",
+  "channel",
+  "paid_at",
+  "save_method",
+  "setup_autosave",
+  "authorization",
+  "message",
+  "access_code",
   "authorization_url",
   "gateway_response"
  ],
@@ -48,13 +59,41 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Initiated\nSuccess\nFailed\nAbandoned"
+   "options": "Initiated\nPending\nSuccess\nFailed\nAbandoned"
+  },
+  {
+   "default": "Checkout",
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Source",
+   "options": "Checkout\nAutosave\nDedicated Account"
   },
   {
    "fieldname": "amount",
    "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Amount"
+   "label": "Amount (credited)",
+   "options": "currency"
+  },
+  {
+   "fieldname": "fee",
+   "fieldtype": "Currency",
+   "label": "Fee Added for Member",
+   "options": "currency"
+  },
+  {
+   "fieldname": "charged_amount",
+   "fieldtype": "Currency",
+   "label": "Amount Charged",
+   "options": "currency"
+  },
+  {
+   "fieldname": "paystack_fees",
+   "fieldtype": "Currency",
+   "label": "Paystack Fees",
+   "options": "currency",
+   "read_only": 1
   },
   {
    "default": "NGN",
@@ -112,6 +151,47 @@
    "label": "Gateway"
   },
   {
+   "fieldname": "channel",
+   "fieldtype": "Data",
+   "label": "Channel",
+   "read_only": 1
+  },
+  {
+   "fieldname": "paid_at",
+   "fieldtype": "Datetime",
+   "label": "Paid At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "save_method",
+   "fieldtype": "Check",
+   "label": "Save Payment Method"
+  },
+  {
+   "fieldname": "setup_autosave",
+   "fieldtype": "Check",
+   "label": "Turn On Autosave After Payment"
+  },
+  {
+   "fieldname": "authorization",
+   "fieldtype": "Link",
+   "label": "Saved Payment Method",
+   "options": "Coop Payment Authorization",
+   "read_only": 1
+  },
+  {
+   "fieldname": "message",
+   "fieldtype": "Small Text",
+   "label": "Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "access_code",
+   "fieldtype": "Data",
+   "label": "Access Code",
+   "read_only": 1
+  },
+  {
    "fieldname": "authorization_url",
    "fieldtype": "Small Text",
    "label": "Authorization Url",
@@ -127,7 +207,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-20 12:00:00.000000",
+ "modified": "2026-10-21 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Payment Transaction",

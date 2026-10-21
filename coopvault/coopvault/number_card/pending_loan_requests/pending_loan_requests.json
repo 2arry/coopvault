@@ -1,0 +1,23 @@
+{
+ "color": "#b45309",
+ "creation": "2026-10-21 01:13:31.101566",
+ "docstatus": 0,
+ "doctype": "Number Card",
+ "document_type": "Coop Loan",
+ "filters_json": "[[\"Coop Loan\", \"status\", \"=\", \"Pending\"]]",
+ "function": "Count",
+ "idx": 0,
+ "is_public": 1,
+ "is_standard": 1,
+ "label": "Pending Loan Requests",
+ "modified": "2026-10-21 01:13:31.101566",
+ "modified_by": "Administrator",
+ "module": "CoopVault",
+ "name": "Pending Loan Requests",
+ "owner": "Administrator",
+ "report_function": "Sum",
+ "show_full_number": 0,
+ "show_percentage_stats": 0,
+ "stats_time_interval": "Daily",
+ "type": "Document Type"
+}

@@ -2,7 +2,7 @@
  "actions": [],
  "allow_rename": 0,
  "autoname": "hash",
- "creation": "2026-10-20 12:00:00.000000",
+ "creation": "2026-10-21 09:00:00.000000",
  "custom": 0,
  "doctype": "DocType",
  "editable_grid": 1,
@@ -21,7 +21,29 @@
   "total_repaid",
   "cb2",
   "loan_outstanding",
-  "borrow_limit"
+  "borrow_limit",
+  "payout_section",
+  "payout_bank_name",
+  "payout_bank_code",
+  "cb3",
+  "payout_account_number",
+  "payout_account_name",
+  "autosave_section",
+  "autosave_enabled",
+  "autosave_amount",
+  "autosave_authorization",
+  "cb4",
+  "autosave_next_date",
+  "autosave_failures",
+  "autosave_last_error",
+  "dva_section",
+  "paystack_customer_code",
+  "dva_status",
+  "dva_error",
+  "cb5",
+  "dva_account_number",
+  "dva_account_name",
+  "dva_bank_name"
  ],
  "fields": [
   {
@@ -114,11 +136,137 @@
    "fieldtype": "Currency",
    "label": "Available to Borrow",
    "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "payout_section",
+   "fieldtype": "Section Break",
+   "label": "Payout Account (where loans are sent)"
+  },
+  {
+   "fieldname": "payout_bank_name",
+   "fieldtype": "Data",
+   "label": "Bank"
+  },
+  {
+   "fieldname": "payout_bank_code",
+   "fieldtype": "Data",
+   "label": "Bank Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "payout_account_number",
+   "fieldtype": "Data",
+   "label": "Account Number"
+  },
+  {
+   "fieldname": "payout_account_name",
+   "fieldtype": "Data",
+   "label": "Account Name",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "autosave_section",
+   "fieldtype": "Section Break",
+   "label": "Autosave"
+  },
+  {
+   "fieldname": "autosave_enabled",
+   "fieldtype": "Check",
+   "label": "Autosave On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "autosave_amount",
+   "fieldtype": "Currency",
+   "label": "Autosave Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "autosave_authorization",
+   "fieldtype": "Link",
+   "label": "Payment Method",
+   "options": "Coop Payment Authorization",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "autosave_next_date",
+   "fieldtype": "Date",
+   "label": "Next Autosave",
+   "read_only": 1
+  },
+  {
+   "fieldname": "autosave_failures",
+   "fieldtype": "Int",
+   "label": "Autosave Failures",
+   "read_only": 1
+  },
+  {
+   "fieldname": "autosave_last_error",
+   "fieldtype": "Small Text",
+   "label": "Autosave Last Error",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "dva_section",
+   "fieldtype": "Section Break",
+   "label": "Dedicated Account"
+  },
+  {
+   "fieldname": "paystack_customer_code",
+   "fieldtype": "Data",
+   "label": "Paystack Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dva_status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "\nRequested\nAssigned\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dva_error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb5",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "dva_account_number",
+   "fieldtype": "Data",
+   "label": "Account Number",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dva_account_name",
+   "fieldtype": "Data",
+   "label": "Account Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dva_bank_name",
+   "fieldtype": "Data",
+   "label": "Bank",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-20 12:00:00.000000",
+ "modified": "2026-10-21 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Member",
