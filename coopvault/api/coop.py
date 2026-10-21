@@ -292,6 +292,7 @@ def pending_counts(cooperative):
 		"withdrawals": frappe.db.count("Coop Withdrawal", {"cooperative": cooperative, "status": "Pending"}),
 		"disputes": frappe.db.count("Coop Loan", {"cooperative": cooperative, "status": "Sent", "receipt_disputed": 1})
 		+ frappe.db.count("Coop Withdrawal", {"cooperative": cooperative, "status": "Sent", "receipt_disputed": 1}),
+		"unmatched": frappe.db.count("Coop Payment Transaction", {"cooperative": cooperative, "status": "Unmatched"}),
 	}
 
 
@@ -690,6 +691,14 @@ def get_statement(cooperative, member=None, limit=None):
 	):
 		entries.append(dict(doctype="Coop Withdrawal", name=w.name, type="Withdrawal", date=w.sent_on or w.requested_on,
 			amount=w.amount, direction="out", status=w.status, creation=w.creation))
+	for s in frappe.db.sql(
+		"""select s.name, s.period_end, s.posted_on, l.share_amount from `tabCoop Share Out Line` l
+		join `tabCoop Share Out` s on s.name = l.parent where l.member = %s and s.status = 'Posted'""",
+		member,
+		as_dict=True,
+	):
+		entries.append(dict(doctype="Coop Share Out", name=s.name, type="Share-out", date=s.period_end,
+			amount=s.share_amount, direction="in", status="Confirmed", creation=s.posted_on))
 
 	entries.sort(key=lambda e: (str(e["date"]), str(e["creation"])), reverse=True)
 	if limit:

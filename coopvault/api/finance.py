@@ -574,6 +574,46 @@ def get_receipt(doctype, name):
 	}
 
 
+# Transfers nobody could be matched to ------------------------------------------------------
+
+
+@frappe.whitelist(methods=["POST"])
+def allocate_unmatched(reference, member):
+	"""Add a transfer that came in without a recognisable account number to the member who sent
+	it. Staff do this once they've found out who it was; nobody can allocate one to themselves."""
+	tx = frappe.get_doc("Coop Payment Transaction", reference, for_update=True)
+	if tx.status != "Unmatched" or not tx.cooperative:
+		frappe.throw(_("This transfer has already been dealt with"))
+	me = get_membership(tx.cooperative, admin=True)
+	ensure_not_self(me, member, _("Another admin or the treasurer has to add this to your own savings"))
+	m = frappe.db.get_value("Coop Member", member, ["name", "cooperative", "user", "full_name"], as_dict=True)
+	if not m or m.cooperative != tx.cooperative:
+		frappe.throw(_("Member not found"))
+	doc = frappe.get_doc(
+		{
+			"doctype": "Coop Contribution",
+			"cooperative": tx.cooperative,
+			"member": member,
+			"amount": tx.amount,
+			"contribution_date": today(),
+			"payment_method": "Bank Transfer",
+			"reference": tx.reference,
+			"status": "Confirmed",
+			"reviewed_by": frappe.session.user,
+			"notes": _("Transfer matched by {0}").format(me.full_name),
+		}
+	)
+	doc.flags.money_received = True
+	doc.insert(ignore_permissions=True)
+	tx.update({"status": "Success", "allocated_to": member, "member": member, "user": m.user,
+		"reference_doctype": doc.doctype, "reference_name": doc.name})
+	tx.save(ignore_permissions=True)
+	notify(m.user, _("{0} added to your savings").format(_money(doc.amount, tx.cooperative)),
+		_("A transfer you sent was matched to you by {0}.").format(me.full_name),
+		link=f"/receipt/Coop Contribution/{doc.name}", cooperative=tx.cooperative, kind="payment")
+	return {"ok": True, "contribution": doc.name}
+
+
 @frappe.whitelist()
 def pending_reviews(cooperative):
 	"""Everything waiting on an admin or the treasurer, in one call."""
@@ -604,6 +644,12 @@ def pending_reviews(cooperative):
 		"loans": loans,
 		"withdrawals": withdrawals,
 		"disputes": disputed,
+		"unmatched": frappe.get_all(
+			"Coop Payment Transaction",
+			filters={"cooperative": cooperative, "status": "Unmatched"},
+			fields=["name", "amount", "currency", "creation", "message"],
+			order_by="creation asc",
+		),
 		"awaiting_members": frappe.get_all(
 			"Coop Contribution",
 			filters={"cooperative": cooperative, "status": "Pending", "payment_method": "Opening Balance"},

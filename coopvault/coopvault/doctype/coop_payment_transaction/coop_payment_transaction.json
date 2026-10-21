@@ -12,12 +12,15 @@
   "purpose",
   "status",
   "source",
+  "settles_to",
+  "allocated_to",
   "amount",
   "fee",
   "charged_amount",
   "paystack_fees",
   "settled_amount",
   "refunded_amount",
+  "refund_ids",
   "currency",
   "cb1",
   "cooperative",
@@ -72,6 +75,22 @@
    "options": "Checkout\nAutosave\nDedicated Account"
   },
   {
+   "description": "Cooperative Bank when the group's subaccount receives it; otherwise it waits in the platform's Paystack balance",
+   "fieldname": "settles_to",
+   "fieldtype": "Select",
+   "label": "Settles To",
+   "options": "Cooperative Bank\nPlatform Paystack Balance",
+   "read_only": 1
+  },
+  {
+   "description": "For an unmatched transfer, the member it was added to",
+   "fieldname": "allocated_to",
+   "fieldtype": "Link",
+   "label": "Allocated To Member",
+   "options": "Coop Member",
+   "read_only": 1
+  },
+  {
    "fieldname": "amount",
    "fieldtype": "Currency",
    "in_list_view": 1,
@@ -110,6 +129,13 @@
    "fieldtype": "Currency",
    "label": "Refunded Amount",
    "options": "currency",
+   "read_only": 1
+  },
+  {
+   "description": "Paystack refund ids already counted",
+   "fieldname": "refund_ids",
+   "fieldtype": "Small Text",
+   "label": "Refunds Applied",
    "read_only": 1
   },
   {
@@ -224,7 +250,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 07:45:54.412957",
+ "modified": "2026-10-21 08:01:37.185658",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Payment Transaction",

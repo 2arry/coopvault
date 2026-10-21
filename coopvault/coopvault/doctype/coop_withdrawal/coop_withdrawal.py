@@ -4,9 +4,11 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import flt, fmt_money, today
+from frappe.utils import flt, today
 
+from coopvault import postings
 from coopvault.ledger import cooperative_totals, member_balances, refresh_all
+from coopvault.utils import money_text
 
 TRANSITIONS = {
 	"Pending": {"Sent", "Rejected", "Cancelled"},
@@ -32,13 +34,13 @@ class CoopWithdrawal(Document):
 			if flt(self.amount) > b.withdrawable + 0.005:
 				frappe.throw(
 					_("You can take out at most {0}. Savings that back a loan stay in the pool until it's repaid.").format(
-						fmt_money(b.withdrawable, currency=currency)
+						money_text(b.withdrawable, currency)
 					)
 				)
 		if self.status == "Sent" and previous == "Pending":
 			pool = cooperative_totals(self.cooperative, exclude_withdrawal=self.name).pool_balance
 			if flt(self.amount) > pool + 0.005:
-				frappe.throw(_("The pool only has {0} right now").format(fmt_money(pool, currency=currency)))
+				frappe.throw(_("The pool only has {0} right now").format(money_text(pool, currency)))
 			if not (self.transfer_reference or "").strip():
 				frappe.throw(_("Enter the transfer reference from your bank app"))
 			payout = frappe.db.get_value(
@@ -54,4 +56,5 @@ class CoopWithdrawal(Document):
 			self.received_on = self.received_on or today()
 
 	def on_update(self):
+		postings.withdrawal(self)
 		refresh_all(member=self.member, cooperative=self.cooperative)

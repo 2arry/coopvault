@@ -4,9 +4,11 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import add_months, flt, fmt_money, getdate, now_datetime, today
+from frappe.utils import add_months, flt, getdate, now_datetime, today
 
+from coopvault import postings
 from coopvault.ledger import cooperative_totals, member_balances, refresh_all
+from coopvault.utils import money_text
 
 # Allowed status changes. Sent = money transferred, waiting for the borrower to confirm it arrived.
 TRANSITIONS = {
@@ -63,9 +65,9 @@ class CoopLoan(Document):
 				_(
 					"Loan of {0} exceeds the borrowing limit. This member has {1} in savings and can borrow at most {2} right now."
 				).format(
-					fmt_money(self.principal, currency=coop.currency),
-					fmt_money(b.savings, currency=coop.currency),
-					fmt_money(b.borrow_limit, currency=coop.currency),
+					money_text(self.principal, coop.currency),
+					money_text(b.savings, coop.currency),
+					money_text(b.borrow_limit, coop.currency),
 				),
 				title=_("Borrowing limit exceeded"),
 			)
@@ -75,7 +77,7 @@ class CoopLoan(Document):
 		if flt(self.principal) > pool + 0.005:
 			frappe.throw(
 				_("The cooperative pool only has {0} available. This loan cannot be sent yet.").format(
-					fmt_money(pool, currency=coop.currency)
+					money_text(pool, coop.currency)
 				)
 			)
 		if not (self.transfer_reference or "").strip():
@@ -89,6 +91,7 @@ class CoopLoan(Document):
 		self.disbursed_on = today()
 
 	def on_update(self):
+		postings.loan(self)
 		refresh_all(member=self.member, cooperative=self.cooperative, loan=self.name)
 
 	def on_trash(self):

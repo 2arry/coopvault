@@ -1,0 +1,114 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-21 18:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "account",
+  "debit",
+  "credit",
+  "member",
+  "loan",
+  "remarks",
+  "account_type",
+  "root_type",
+  "cooperative",
+  "posting_date",
+  "is_posted"
+ ],
+ "fields": [
+  {
+   "fieldname": "account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Account",
+   "options": "Coop Account",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "debit",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Debit"
+  },
+  {
+   "fieldname": "credit",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Credit"
+  },
+  {
+   "fieldname": "member",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Member",
+   "options": "Coop Member",
+   "search_index": 1
+  },
+  {
+   "fieldname": "loan",
+   "fieldtype": "Link",
+   "label": "Loan",
+   "options": "Coop Loan",
+   "search_index": 1
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Data",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "account_type",
+   "fieldtype": "Data",
+   "label": "Account Type",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "root_type",
+   "fieldtype": "Data",
+   "label": "Root Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cooperative",
+   "fieldtype": "Link",
+   "label": "Cooperative",
+   "options": "Cooperative",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "posting_date",
+   "fieldtype": "Date",
+   "label": "Posting Date",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Drafts waiting for approval don't count in any balance",
+   "fieldname": "is_posted",
+   "fieldtype": "Check",
+   "label": "Is Posted",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-21 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CoopVault",
+ "name": "Coop Journal Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

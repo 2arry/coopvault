@@ -8,6 +8,8 @@ and never drift.
 import frappe
 from frappe.utils import add_days, add_months, cint, flt, getdate, today
 
+from coopvault import accounting
+
 OPEN_LOAN_STATES = ("Pending", "Sent", "Active")
 MONEY_OUT_LOAN_STATES = ("Sent", "Active", "Repaid")
 OWED_LOAN_STATES = ("Sent", "Active")
@@ -46,7 +48,9 @@ def member_balances(member, exclude_loan=None, exclude_withdrawal=None):
 	outstanding = sum(flt(l.balance) for l in loans if l.status in OWED_LOAN_STATES)
 	pending = sum(flt(l.principal) for l in loans if l.status == "Pending")
 	exposure = outstanding + pending
-	savings = contributed - withdrawn
+	# What the group owes the member, from the books: contributions, less withdrawals, plus any
+	# surplus shared out to them
+	savings = accounting.member_savings(member)
 
 	return frappe._dict(
 		savings=savings,
@@ -86,7 +90,8 @@ def cooperative_totals(cooperative, exclude_loan=None, exclude_withdrawal=None):
 		total_withdrawn=withdrawn,
 		total_disbursed=disbursed,
 		loans_outstanding=outstanding,
-		pool_balance=contributions + repayments - disbursed - withdrawn,
+		# Money actually held (bank, cash, Paystack balance) after fees, from the books
+		pool_balance=accounting.cash_balance(cooperative),
 	)
 
 

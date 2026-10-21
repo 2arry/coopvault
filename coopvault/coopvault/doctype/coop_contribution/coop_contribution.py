@@ -6,6 +6,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt, now_datetime
 
+from coopvault import postings
 from coopvault.ledger import refresh_all
 
 
@@ -24,6 +25,7 @@ class CoopContribution(Document):
 			self.reviewed_on = now_datetime()
 
 	def on_update(self):
+		postings.contribution(self)
 		refresh_all(member=self.member, cooperative=self.cooperative)
 
 	def on_trash(self):

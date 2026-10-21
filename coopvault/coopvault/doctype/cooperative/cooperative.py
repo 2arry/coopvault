@@ -27,6 +27,11 @@ class Cooperative(Document):
 		if not self.created_by_user:
 			self.created_by_user = frappe.session.user
 
+	def after_insert(self):
+		from coopvault.accounting import ensure_chart
+
+		ensure_chart(self.name)
+
 	def validate(self):
 		if not 0 <= flt(self.loan_multiplier) <= 1:
 			frappe.throw(_("Borrow limit multiplier must be between 0 and 1: members cannot borrow more than they have saved"))

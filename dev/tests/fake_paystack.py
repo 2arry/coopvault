@@ -30,6 +30,7 @@ def tx_data(t):
 		"currency": t.get("currency", "NGN"), "channel": t.get("channel", "card"), "paid_at": t.get("paid_at"),
 		"gateway_response": t.get("gateway_response", "Successful"), "fees": int(t["amount"] * 0.015),
 		"metadata": t.get("metadata"),
+		"subaccount": {"subaccount_code": t["subaccount"]} if t.get("subaccount") else {},
 		"customer": {"email": t["email"], "customer_code": "CUS_" + t["email"].split("@")[0][:10]},
 		"authorization": t.get("authorization") or {
 			"authorization_code": "AUTH_" + t["reference"][-8:], "reusable": True, "channel": "card",
@@ -137,7 +138,7 @@ class H(BaseHTTPRequestHandler):
 		if path == "/_test/transfer":
 			ref = body["reference"]
 			TX[ref] = {"id": len(TX) + 1, "reference": ref, "amount": int(body["amount"]), "email": body["email"],
-				"status": "success", "paid_at": now(), "channel": "dedicated_nuban",
+				"status": "success", "paid_at": now(), "channel": "dedicated_nuban", "subaccount": body.get("subaccount"),
 				"authorization": {"channel": "dedicated_nuban", "reusable": False,
 					"receiver_bank_account_number": body["account_number"], "receiver_bank": "Test Bank"}}
 			return self.send(200, {"ok": True, "data": tx_data(TX[ref])})

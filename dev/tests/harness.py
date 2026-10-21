@@ -105,8 +105,9 @@ def pay(token, cooperative, amount, purpose="Contribution", loan=None, **extra):
 
 def new_cooperative(admin_token, name, members=(), **rules):
 	"""A cooperative with active members: members = [(token, role), ...]. Returns (coop, {token: member})."""
-	coop = call("coop.create_cooperative", admin_token, cooperative_name=f"{name} {RUN}", contribution_amount=10000,
-		contribution_frequency="Monthly", interest_rate=5, max_loan_tenure_months=6, fee_bearer="Member", **rules)
+	settings = {"contribution_amount": 10000, "contribution_frequency": "Monthly", "interest_rate": 5,
+		"max_loan_tenure_months": 6, "fee_bearer": "Member", **rules}
+	coop = call("coop.create_cooperative", admin_token, cooperative_name=f"{name} {RUN}", **settings)
 	ids = {}
 	for token, _role in members:
 		call("coop.join_cooperative", token, join_code=coop["join_code"])

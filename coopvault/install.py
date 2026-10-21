@@ -14,12 +14,14 @@ def after_install():
 	setup_settings()
 	set_defaults()
 	ensure_vapid_keys()
+	allow_group_signups()
 
 
 def after_migrate():
 	make_roles()
 	setup_settings()
 	ensure_vapid_keys()
+	allow_group_signups()
 
 
 def make_roles():
@@ -44,3 +46,12 @@ def set_defaults():
 		settings.db_set("time_zone", "Africa/Lagos")
 	if not settings.country:
 		settings.db_set("country", "Nigeria")
+
+
+def allow_group_signups():
+	"""Frappe refuses new accounts after 60 in an hour. A cooperative sharing its invite link at
+	a meeting can pass that, so raise it unless the site already chose a limit."""
+	if not frappe.conf.get("throttle_user_limit"):
+		from frappe.installer import update_site_config
+
+		update_site_config("throttle_user_limit", 1000)

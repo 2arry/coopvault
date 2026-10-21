@@ -16,7 +16,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, add_months, cint, flt, get_datetime, getdate, now_datetime, today
 
-from coopvault import paystack
+from coopvault import paystack, postings
 from coopvault.api import get_membership, require_login
 from coopvault.ledger import TRACKED, contribution_standing, plan_on, plans_for, refresh_all
 from coopvault.notify import notify, staff_of
@@ -53,6 +53,14 @@ def _split(coop):
 	if coop.paystack_subaccount_code:
 		return {"subaccount": coop.paystack_subaccount_code, "bearer": "subaccount"}
 	return {}
+
+
+def _settles_to(coop, data=None):
+	"""Payments split to the group's subaccount settle into its own bank; without one they wait
+	in the platform's Paystack balance (an amount the platform owes the group)."""
+	if data is not None and (data.get("subaccount") or {}).get("subaccount_code"):
+		return "Cooperative Bank"
+	return "Cooperative Bank" if coop.paystack_subaccount_code else "Platform Paystack Balance"
 
 
 # Config ---------------------------------------------------------------------------
@@ -168,6 +176,7 @@ def initialize(cooperative, purpose, amount, loan=None, save_method=0, setup_aut
 			"reference": reference,
 			"purpose": purpose,
 			"source": "Checkout",
+			"settles_to": _settles_to(coop),
 			"status": "Initiated",
 			"amount": amount,
 			"fee": fee,
@@ -354,6 +363,12 @@ def _complete(reference, data, method="Paystack"):
 		return tx
 
 	tx.settled_amount = settled_amount(tx, data)
+	if tx.source == "Dedicated Account":
+		coop = _coop(tx.cooperative)
+		tx.settles_to = _settles_to(coop, data)
+		if coop.fee_bearer == "Member" and 0 < tx.settled_amount < flt(tx.amount):
+			# Transfers have no checkout to add the fee to, so the member is credited what arrived
+			tx.amount = tx.settled_amount
 	doc = _record_payment(tx, method=method)
 
 	if tx.save_method and tx.user:
@@ -366,6 +381,7 @@ def _complete(reference, data, method="Paystack"):
 	tx.reference_doctype = doc.doctype
 	tx.reference_name = doc.name
 	tx.save(ignore_permissions=True)
+	postings.payment_charges(tx)
 	_notify_payment(tx, doc)
 	return tx
 
@@ -390,9 +406,11 @@ def _notify_payment(tx, doc):
 	currency = tx.currency
 	what = _("towards your loan") if doc.doctype == "Coop Loan Repayment" else _("to your savings")
 	via = {"Autosave": _(" by Autosave"), "Dedicated Account": _(" by transfer to your account number")}.get(tx.source, "")
+	fee = flt(flt(tx.charged_amount) - flt(tx.amount), 2) if tx.source == "Dedicated Account" else 0
 	notify(
 		tx.user,
-		_("{0} added {1}{2}").format(money_text(tx.amount, currency), what, via),
+		_("{0} added {1}{2}").format(money_text(tx.amount, currency), what, via)
+		+ (_(" ({0} transfer fee)").format(money_text(fee, currency)) if fee > 0 else ""),
 		link=f"/receipt/{doc.doctype}/{doc.name}",
 		cooperative=tx.cooperative,
 		kind="payment",
@@ -426,16 +444,28 @@ def _handle_refund(data):
 	if not reference or not frappe.db.exists("Coop Payment Transaction", reference):
 		return
 	tx = frappe.get_doc("Coop Payment Transaction", reference, for_update=True)
+	refund_id = str(data.get("id") or data.get("refund_reference") or "")
+	seen = [x for x in (tx.refund_ids or "").split(",") if x]
+	if refund_id and refund_id in seen:
+		return  # Paystack resends events; each refund counts once
 	refunded = flt(data.get("amount")) / 100
 	tx.refunded_amount = flt(tx.refunded_amount) + refunded
+	if refund_id:
+		tx.refund_ids = ",".join([*seen, refund_id])
 	if tx.status in ("Success", "Disputed") and tx.refunded_amount + 0.01 >= flt(tx.amount):
 		tx.status = "Refunded"
 		tx.save(ignore_permissions=True)
 		_reverse_payment(tx, _("Refunded through Paystack"))
+		postings.refund(tx, tx.refunded_amount, full=True)
 	else:
 		tx.save(ignore_permissions=True)
-		notify(staff_of(tx.cooperative), _("Partial refund on {0} needs checking").format(reference),
-			_("{0} of {1} was refunded.").format(refunded, tx.amount), cooperative=tx.cooperative, kind="payment-reversed")
+		postings.refund(tx, refunded, full=False)
+		if tx.member:
+			refresh_all(member=tx.member, cooperative=tx.cooperative)
+		notify(staff_of(tx.cooperative), _("Part of payment {0} was refunded").format(reference),
+			_("{0} of {1} went back to the payer and came off their savings.").format(
+				money_text(refunded, tx.currency), money_text(tx.amount, tx.currency)),
+			cooperative=tx.cooperative, kind="payment-reversed")
 
 
 def _handle_dispute(kind, data):
@@ -455,6 +485,7 @@ def _handle_dispute(kind, data):
 			tx.status = "Refunded"
 			tx.save(ignore_permissions=True)
 			_reverse_payment(tx, _("The card holder's dispute was accepted"))
+			postings.refund(tx, flt(data.get("refund_amount")) / 100 or flt(tx.charged_amount) or flt(tx.amount), full=True)
 		else:
 			tx.status = "Success"
 			tx.save(ignore_permissions=True)
@@ -708,6 +739,7 @@ def charge_autosave(member):
 			"reference": reference,
 			"purpose": "Contribution",
 			"source": "Autosave",
+			"settles_to": _settles_to(coop),
 			"status": "Initiated",
 			"amount": amount,
 			"fee": fee,
@@ -972,7 +1004,9 @@ def _record_dedicated_transfer(data):
 			}
 		)
 		tx.settled_amount = settled_amount(tx, data)
+		tx.settles_to = "Cooperative Bank" if cooperative else "Platform Paystack Balance"
 		tx.insert(ignore_permissions=True)
+		postings.unallocated_receipt(tx)
 		if cooperative:
 			notify(
 				staff_of(cooperative),

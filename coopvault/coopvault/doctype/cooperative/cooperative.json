@@ -40,6 +40,12 @@
   "accept_online_payments",
   "cb6",
   "fee_bearer",
+  "books_section",
+  "fiscal_year_start",
+  "reserve_percent",
+  "cb_books",
+  "books_closed_until",
+  "chart_ready",
   "summary_section",
   "member_count",
   "total_contributions",
@@ -249,6 +255,42 @@
    "options": "Member\nCooperative"
   },
   {
+   "fieldname": "books_section",
+   "fieldtype": "Section Break",
+   "label": "Books"
+  },
+  {
+   "default": "January",
+   "fieldname": "fiscal_year_start",
+   "fieldtype": "Select",
+   "label": "Financial Year Starts",
+   "options": "January\nFebruary\nMarch\nApril\nMay\nJune\nJuly\nAugust\nSeptember\nOctober\nNovember\nDecember"
+  },
+  {
+   "default": "25",
+   "description": "Set aside from each year's surplus before sharing out. The Cooperative Societies law asks for at least 25%.",
+   "fieldname": "reserve_percent",
+   "fieldtype": "Percent",
+   "label": "Reserve Fund Share of Surplus"
+  },
+  {
+   "fieldname": "cb_books",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Nothing can be posted on or before this date. Set by a share-out or by closing the books.",
+   "fieldname": "books_closed_until",
+   "fieldtype": "Date",
+   "label": "Books Closed Up To",
+   "read_only": 1
+  },
+  {
+   "fieldname": "chart_ready",
+   "fieldtype": "Check",
+   "label": "Chart of Accounts Created",
+   "read_only": 1
+  },
+  {
    "collapsible": 1,
    "fieldname": "summary_section",
    "fieldtype": "Section Break",
@@ -310,7 +352,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 18:00:00.000000",
+ "modified": "2026-10-21 07:58:09.321687",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Cooperative",

@@ -4,9 +4,11 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import flt, fmt_money, now_datetime
+from frappe.utils import flt, now_datetime
 
+from coopvault import postings
 from coopvault.ledger import refresh_all
+from coopvault.utils import money_text
 
 
 class CoopLoanRepayment(Document):
@@ -32,7 +34,7 @@ class CoopLoanRepayment(Document):
 				currency = frappe.db.get_value("Cooperative", loan.cooperative, "currency")
 				frappe.throw(
 					_("Repayment exceeds the outstanding loan balance of {0}").format(
-						fmt_money(loan.balance, currency=currency)
+						money_text(loan.balance, currency)
 					)
 				)
 		if self.has_value_changed("status") and self.status in ("Confirmed", "Rejected", "Reversed"):
@@ -40,6 +42,7 @@ class CoopLoanRepayment(Document):
 			self.reviewed_on = now_datetime()
 
 	def on_update(self):
+		postings.repayment(self)
 		refresh_all(member=self.member, cooperative=self.cooperative, loan=self.loan)
 
 	def on_trash(self):
