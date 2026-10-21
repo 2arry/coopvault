@@ -2,7 +2,7 @@
  "actions": [],
  "allow_rename": 0,
  "autoname": "format:COOP-{#####}",
- "creation": "2026-10-21 09:00:00.000000",
+ "creation": "2026-10-21 18:00:00.000000",
  "custom": 0,
  "doctype": "DocType",
  "editable_grid": 1,
@@ -19,16 +19,20 @@
   "contribution_amount",
   "contribution_frequency",
   "start_date",
-  "cb2",
+  "contribution_plans",
+  "loan_section",
   "loan_multiplier",
   "interest_rate",
+  "cb2",
   "max_loan_tenure_months",
   "bank_section",
   "bank_name",
   "settlement_bank_code",
+  "bank_changed_on",
   "cb3",
   "account_number",
   "account_verified",
+  "bank_changed_by",
   "cb4",
   "account_name",
   "paystack_subaccount_code",
@@ -40,6 +44,7 @@
   "member_count",
   "total_contributions",
   "total_repayments",
+  "total_withdrawn",
   "cb5",
   "total_disbursed",
   "loans_outstanding",
@@ -97,35 +102,45 @@
   {
    "fieldname": "rules_section",
    "fieldtype": "Section Break",
-   "label": "Rules"
+   "label": "Contributions"
   },
   {
-   "description": "Suggested amount each member contributes per period",
+   "description": "From the latest contribution plan",
    "fieldname": "contribution_amount",
    "fieldtype": "Currency",
-   "label": "Expected Contribution",
-   "options": "currency"
+   "label": "Current Contribution",
+   "options": "currency",
+   "read_only": 1
   },
   {
    "default": "Monthly",
    "fieldname": "contribution_frequency",
    "fieldtype": "Select",
-   "label": "Contribution Frequency",
-   "options": "Weekly\nMonthly\nQuarterly\nFlexible"
+   "label": "Current Frequency",
+   "options": "Weekly\nMonthly\nQuarterly\nFlexible",
+   "read_only": 1
   },
   {
-   "description": "Members owe a contribution for every period from this date (or the day they joined, if later)",
+   "description": "Members owe from the first full period after this date or the day they joined, whichever is later",
    "fieldname": "start_date",
    "fieldtype": "Date",
    "label": "Contributions Start"
   },
   {
-   "fieldname": "cb2",
-   "fieldtype": "Column Break"
+   "description": "Each change applies from its effective date, so past periods keep the amount that applied then",
+   "fieldname": "contribution_plans",
+   "fieldtype": "Table",
+   "label": "Contribution Plan History",
+   "options": "Coop Contribution Plan"
+  },
+  {
+   "fieldname": "loan_section",
+   "fieldtype": "Section Break",
+   "label": "Loans"
   },
   {
    "default": "1",
-   "description": "Max outstanding loan as a multiple of a member's confirmed contributions. 1 = members can never borrow more than they have contributed.",
+   "description": "Share of a member's savings they can borrow. 1 = members can never borrow more than they have saved.",
    "fieldname": "loan_multiplier",
    "fieldtype": "Float",
    "label": "Borrow Limit Multiplier",
@@ -138,26 +153,37 @@
    "label": "Loan Interest Rate (flat %)"
   },
   {
+   "fieldname": "cb2",
+   "fieldtype": "Column Break"
+  },
+  {
    "default": "12",
    "fieldname": "max_loan_tenure_months",
    "fieldtype": "Int",
    "label": "Max Loan Tenure (Months)"
   },
   {
-   "description": "Where members send transfers, and where online payments settle",
+   "description": "Where online payments settle (through a Paystack subaccount)",
    "fieldname": "bank_section",
    "fieldtype": "Section Break",
-   "label": "Bank Account"
+   "label": "Settlement Bank Account"
   },
   {
    "fieldname": "bank_name",
    "fieldtype": "Data",
-   "label": "Bank Name"
+   "label": "Bank Name",
+   "read_only": 1
   },
   {
    "fieldname": "settlement_bank_code",
    "fieldtype": "Data",
    "label": "Bank Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bank_changed_on",
+   "fieldtype": "Datetime",
+   "label": "Last Changed",
    "read_only": 1
   },
   {
@@ -167,12 +193,20 @@
   {
    "fieldname": "account_number",
    "fieldtype": "Data",
-   "label": "Account Number"
+   "label": "Account Number",
+   "read_only": 1
   },
   {
    "fieldname": "account_verified",
    "fieldtype": "Check",
    "label": "Account Verified with Paystack",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bank_changed_by",
+   "fieldtype": "Link",
+   "label": "Changed By",
+   "options": "User",
    "read_only": 1
   },
   {
@@ -182,7 +216,8 @@
   {
    "fieldname": "account_name",
    "fieldtype": "Data",
-   "label": "Account Name"
+   "label": "Account Name",
+   "read_only": 1
   },
   {
    "fieldname": "paystack_subaccount_code",
@@ -240,6 +275,13 @@
    "read_only": 1
   },
   {
+   "fieldname": "total_withdrawn",
+   "fieldtype": "Currency",
+   "label": "Total Withdrawn",
+   "options": "currency",
+   "read_only": 1
+  },
+  {
    "fieldname": "cb5",
    "fieldtype": "Column Break"
   },
@@ -268,7 +310,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 09:00:00.000000",
+ "modified": "2026-10-21 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Cooperative",

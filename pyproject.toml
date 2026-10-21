@@ -10,6 +10,9 @@ dynamic = ["version"]
 dependencies = [
     # "frappe~=16.0.0" # Installed and managed by bench.
     "requests",
+    # Web Push notifications (no email/SMS)
+    "pywebpush==2.5.0",
+    "py-vapid==1.9.4",
 ]
 
 [build-system]

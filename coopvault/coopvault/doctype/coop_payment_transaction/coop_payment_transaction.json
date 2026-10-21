@@ -2,7 +2,7 @@
  "actions": [],
  "allow_rename": 0,
  "autoname": "field:reference",
- "creation": "2026-10-21 09:00:00.000000",
+ "creation": "2026-10-21 18:00:00.000000",
  "custom": 0,
  "doctype": "DocType",
  "editable_grid": 1,
@@ -16,6 +16,7 @@
   "fee",
   "charged_amount",
   "paystack_fees",
+  "refunded_amount",
   "currency",
   "cb1",
   "cooperative",
@@ -59,7 +60,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Initiated\nPending\nSuccess\nFailed\nAbandoned"
+   "options": "Initiated\nPending\nSuccess\nFailed\nAbandoned\nRefunded\nDisputed"
   },
   {
    "default": "Checkout",
@@ -92,6 +93,13 @@
    "fieldname": "paystack_fees",
    "fieldtype": "Currency",
    "label": "Paystack Fees",
+   "options": "currency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "refunded_amount",
+   "fieldtype": "Currency",
+   "label": "Refunded Amount",
    "options": "currency",
    "read_only": 1
   },
@@ -207,7 +215,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 09:00:00.000000",
+ "modified": "2026-10-21 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Payment Transaction",

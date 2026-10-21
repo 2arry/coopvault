@@ -2,7 +2,7 @@
  "actions": [],
  "allow_rename": 0,
  "autoname": "CONT-.YYYY.-.#####",
- "creation": "2026-10-21 09:00:00.000000",
+ "creation": "2026-10-21 18:00:00.000000",
  "custom": 0,
  "doctype": "DocType",
  "editable_grid": 1,
@@ -20,7 +20,7 @@
   "payment_section",
   "payment_method",
   "reference",
-  "proof",
+  "proposed_by",
   "cb2",
   "notes",
   "reviewed_by",
@@ -90,12 +90,13 @@
   },
   {
    "default": "Pending",
+   "description": "Pending is only used for opening balances waiting for the member to agree",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Pending\nConfirmed\nRejected"
+   "options": "Pending\nConfirmed\nRejected\nReversed"
   },
   {
    "fieldname": "payment_section",
@@ -103,11 +104,11 @@
    "label": "Payment"
   },
   {
-   "default": "Bank Transfer",
+   "default": "Paystack",
    "fieldname": "payment_method",
    "fieldtype": "Select",
    "label": "Payment Method",
-   "options": "Paystack\nBank Transfer\nCash"
+   "options": "Paystack\nOpening Balance\nBank Transfer\nCash"
   },
   {
    "fieldname": "reference",
@@ -115,9 +116,11 @@
    "label": "Payment Reference"
   },
   {
-   "fieldname": "proof",
-   "fieldtype": "Attach",
-   "label": "Proof of Payment"
+   "fieldname": "proposed_by",
+   "fieldtype": "Link",
+   "label": "Opening Balance Proposed By",
+   "options": "User",
+   "read_only": 1
   },
   {
    "fieldname": "cb2",
@@ -149,7 +152,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 09:00:00.000000",
+ "modified": "2026-10-21 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Contribution",

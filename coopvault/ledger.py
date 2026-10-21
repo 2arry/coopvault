@@ -1,14 +1,18 @@
 """Balance calculations for cooperatives, members and loans.
 
-Everything here is recomputed from the source documents (confirmed contributions,
-confirmed repayments and loans) instead of being incremented, so the stored totals
-can always be rebuilt and never drift.
+Everything here is recomputed from the source documents (confirmed contributions and repayments,
+loans and withdrawals) instead of being incremented, so the stored totals can always be rebuilt
+and never drift.
 """
 
 import frappe
 from frappe.utils import add_days, add_months, cint, flt, getdate, today
 
-OPEN_LOAN_STATES = ("Pending", "Active")
+OPEN_LOAN_STATES = ("Pending", "Sent", "Active")
+MONEY_OUT_LOAN_STATES = ("Sent", "Active", "Repaid")
+OWED_LOAN_STATES = ("Sent", "Active")
+WITHDRAWN_STATES = ("Sent", "Completed")
+TRACKED = ("Weekly", "Monthly", "Quarterly")
 PERIOD_MONTHS = {"Monthly": 1, "Quarterly": 3}
 
 
@@ -17,60 +21,76 @@ def _sum(doctype, field, filters):
 	return flt(value[0].total) if value else 0.0
 
 
-def member_balances(member, exclude_loan=None):
-	"""Return the savings / borrowing position of a Coop Member.
+def member_balances(member, exclude_loan=None, exclude_withdrawal=None):
+	"""Savings and borrowing position of a Coop Member.
 
-	borrow_limit = contributed x multiplier - (balance still owed on active loans + pending requests).
-	With the default multiplier of 1 a member can never owe more than they have contributed.
+	savings      = confirmed contributions - withdrawals paid out
+	borrow_limit = (savings - pending withdrawals) x multiplier - (owed on loans + pending requests)
+	With the default multiplier of 1 nobody can owe more than they have saved.
 	"""
 	cooperative = frappe.db.get_value("Coop Member", member, "cooperative")
 	multiplier = flt(frappe.db.get_value("Cooperative", cooperative, "loan_multiplier"))
 
 	contributed = _sum("Coop Contribution", "amount", {"member": member, "status": "Confirmed"})
 	repaid = _sum("Coop Loan Repayment", "amount", {"member": member, "status": "Confirmed"})
+	withdrawal_filters = {"member": member}
+	if exclude_withdrawal:
+		withdrawal_filters["name"] = ["!=", exclude_withdrawal]
+	withdrawn = _sum("Coop Withdrawal", "amount", {**withdrawal_filters, "status": ["in", WITHDRAWN_STATES]})
+	withdrawal_requested = _sum("Coop Withdrawal", "amount", {**withdrawal_filters, "status": "Pending"})
 
 	loan_filters = {"member": member, "status": ["in", OPEN_LOAN_STATES]}
 	if exclude_loan:
 		loan_filters["name"] = ["!=", exclude_loan]
 	loans = frappe.get_all("Coop Loan", filters=loan_filters, fields=["status", "principal", "balance"])
-
-	outstanding = sum(flt(l.balance) for l in loans if l.status == "Active")
+	outstanding = sum(flt(l.balance) for l in loans if l.status in OWED_LOAN_STATES)
 	pending = sum(flt(l.principal) for l in loans if l.status == "Pending")
 	exposure = outstanding + pending
+	savings = contributed - withdrawn
 
 	return frappe._dict(
+		savings=savings,
 		total_contributed=contributed,
+		total_withdrawn=withdrawn,
+		withdrawal_requested=withdrawal_requested,
 		total_repaid=repaid,
 		loan_outstanding=outstanding,
 		pending_loans=pending,
 		exposure=exposure,
 		multiplier=multiplier,
-		borrow_limit=max(0.0, contributed * multiplier - exposure),
+		borrow_limit=max(0.0, (savings - withdrawal_requested) * multiplier - exposure),
+		# Savings that aren't backing a loan or a pending request can be taken out
+		withdrawable=max(0.0, savings - withdrawal_requested - exposure),
 	)
 
 
-def cooperative_totals(cooperative, exclude_loan=None):
+def cooperative_totals(cooperative, exclude_loan=None, exclude_withdrawal=None):
 	contributions = _sum("Coop Contribution", "amount", {"cooperative": cooperative, "status": "Confirmed"})
 	repayments = _sum("Coop Loan Repayment", "amount", {"cooperative": cooperative, "status": "Confirmed"})
 
-	loan_filters = {"cooperative": cooperative, "status": ["in", ("Active", "Repaid")]}
+	loan_filters = {"cooperative": cooperative, "status": ["in", MONEY_OUT_LOAN_STATES]}
 	if exclude_loan:
 		loan_filters["name"] = ["!=", exclude_loan]
 	disbursed = _sum("Coop Loan", "principal", loan_filters)
-	outstanding = _sum("Coop Loan", "balance", {"cooperative": cooperative, "status": "Active"})
+	outstanding = _sum("Coop Loan", "balance", {"cooperative": cooperative, "status": ["in", OWED_LOAN_STATES]})
+	withdrawal_filters = {"cooperative": cooperative, "status": ["in", WITHDRAWN_STATES]}
+	if exclude_withdrawal:
+		withdrawal_filters["name"] = ["!=", exclude_withdrawal]
+	withdrawn = _sum("Coop Withdrawal", "amount", withdrawal_filters)
 	members = frappe.db.count("Coop Member", {"cooperative": cooperative, "status": "Active"})
 
 	return frappe._dict(
 		member_count=members,
 		total_contributions=contributions,
 		total_repayments=repayments,
+		total_withdrawn=withdrawn,
 		total_disbursed=disbursed,
 		loans_outstanding=outstanding,
-		pool_balance=contributions + repayments - disbursed,
+		pool_balance=contributions + repayments - disbursed - withdrawn,
 	)
 
 
-# Contribution schedule ------------------------------------------------------------
+# Contribution plans and schedule ----------------------------------------------------
 
 
 def period_start(date, frequency):
@@ -84,87 +104,151 @@ def period_start(date, frequency):
 
 def shift_period(start, frequency, n=1):
 	if frequency == "Weekly":
-		return add_days(start, 7 * n)
+		return getdate(add_days(start, 7 * n))
 	return getdate(add_months(start, PERIOD_MONTHS[frequency] * n))
 
 
-def _periods_between(first, current, frequency):
-	if frequency == "Weekly":
-		return (current - first).days // 7 + 1
-	months = (current.year - first.year) * 12 + current.month - first.month
-	return months // PERIOD_MONTHS[frequency] + 1
+def first_full_period(date, frequency):
+	"""Start of the first whole period on or after `date`."""
+	date = getdate(date)
+	start = period_start(date, frequency)
+	return start if start == date else shift_period(start, frequency)
+
+
+def plans_for(cooperative):
+	"""Contribution plans in force, oldest first: [{effective_from, amount, frequency}]."""
+	rows = frappe.get_all(
+		"Coop Contribution Plan",
+		filters={"parent": cooperative, "parenttype": "Cooperative"},
+		fields=["effective_from", "amount", "frequency"],
+		order_by="effective_from asc, idx asc",
+	)
+	if rows:
+		return [frappe._dict(r, effective_from=getdate(r.effective_from)) for r in rows]
+	coop = frappe.db.get_value(
+		"Cooperative", cooperative, ["contribution_amount", "contribution_frequency", "start_date", "creation"], as_dict=True
+	)
+	return [
+		frappe._dict(
+			effective_from=getdate(coop.start_date or coop.creation),
+			amount=flt(coop.contribution_amount),
+			frequency=coop.contribution_frequency or "Flexible",
+		)
+	]
+
+
+def plan_on(plans, date):
+	date = getdate(date)
+	current = plans[0]
+	for p in plans:
+		if p.effective_from <= date:
+			current = p
+	return current
+
+
+def _periods(plans, anchor, until):
+	"""Every whole contribution period from `anchor` until `until`, with the amount due for each."""
+	out = []
+	for i, plan in enumerate(plans):
+		if plan.frequency not in TRACKED or flt(plan.amount) <= 0:
+			continue
+		seg_end = plans[i + 1].effective_from if i + 1 < len(plans) else None
+		start = first_full_period(max(getdate(plan.effective_from), anchor), plan.frequency)
+		while start <= until and (seg_end is None or start < seg_end):
+			end = add_days(shift_period(start, plan.frequency), -1)
+			out.append(frappe._dict(start=start, end=getdate(end), amount=flt(plan.amount), frequency=plan.frequency))
+			start = shift_period(start, plan.frequency)
+	return out
 
 
 def contribution_standing(member, contributed=None):
-	"""Where a member stands against the cooperative's contribution schedule.
+	"""Where a member stands against the cooperative's contribution plan.
 
-	Every period (week / month / quarter) since the member joined is owed in advance and
-	must be paid before it ends. Confirmed contributions fill the oldest periods first.
-	state: up_to_date (this period covered), due (only this period outstanding) or behind.
+	Members owe one contribution per whole period from the first full period after they joined
+	(or after the cooperative's start date). Each period uses the plan that applied then, so raising
+	the amount never makes past months look unpaid. Confirmed contributions fill the oldest periods
+	first. state: up_to_date, due (only the current period is open), behind, or not_started.
 	"""
-	m = frappe.db.get_value(
-		"Coop Member", member, ["cooperative", "joined_on", "creation", "status"], as_dict=True
-	)
-	coop = frappe.db.get_value(
-		"Cooperative",
-		m.cooperative,
-		["contribution_amount", "contribution_frequency", "start_date"],
-		as_dict=True,
-	)
-	amount, frequency = flt(coop.contribution_amount), coop.contribution_frequency
-	if frequency not in ("Weekly", "Monthly", "Quarterly") or amount <= 0 or m.status != "Active":
+	m = frappe.db.get_value("Coop Member", member, ["cooperative", "joined_on", "creation", "status"], as_dict=True)
+	if m.status != "Active":
+		return frappe._dict(tracked=False)
+	plans = plans_for(m.cooperative)
+	now = getdate(today())
+	current_plan = plan_on(plans, now)
+	if not any(p.frequency in TRACKED and flt(p.amount) > 0 for p in plans):
 		return frappe._dict(tracked=False)
 
+	start_date = frappe.db.get_value("Cooperative", m.cooperative, "start_date")
+	anchor = getdate(m.joined_on or m.creation)
+	if start_date and getdate(start_date) > anchor:
+		anchor = getdate(start_date)
 	if contributed is None:
 		contributed = _sum("Coop Contribution", "amount", {"member": member, "status": "Confirmed"})
+	paid = flt(contributed)
 
-	anchor = getdate(m.joined_on or m.creation)
-	if coop.start_date and getdate(coop.start_date) > anchor:
-		anchor = getdate(coop.start_date)
-	first = period_start(anchor, frequency)
-	current = period_start(today(), frequency)
-	elapsed = max(0, _periods_between(first, current, frequency)) if current >= first else 0
+	elapsed = _periods(plans, anchor, now)
+	current = elapsed[-1] if elapsed and elapsed[-1].end >= now else None
+	past = elapsed[:-1] if current else elapsed
+	expected = sum(p.amount for p in elapsed)
+	expected_past = sum(p.amount for p in past)
 
-	covered = int((flt(contributed) + 0.005) // amount)
-	current_end = add_days(shift_period(current, frequency), -1)
+	# Fill periods oldest-first, continuing into future periods to know how far ahead someone is
+	remaining, covered, paid_through, next_open = paid, 0, None, None
+	horizon = add_months(now, 36)
+	for p in _periods(plans, anchor, getdate(horizon)):
+		if remaining + 0.005 >= p.amount:
+			remaining -= p.amount
+			covered += 1
+			paid_through = p.end
+		else:
+			next_open = p
+			break
 
-	if elapsed == 0:
+	periods_behind = max(0, len(past) - covered)
+	if not elapsed:
 		state = "not_started"
-	elif covered >= elapsed:
+	elif paid + 0.005 >= expected:
 		state = "up_to_date"
-	elif covered == elapsed - 1:
+	elif paid + 0.005 >= expected_past:
 		state = "due"
 	else:
 		state = "behind"
 
+	first = _periods(plans, anchor, getdate(horizon))[:1]
+	shown = current or next_open or (first[0] if first else current_plan)
 	return frappe._dict(
 		tracked=True,
-		frequency=frequency,
-		amount=amount,
+		frequency=shown.frequency,
+		amount=flt(shown.amount),
 		state=state,
-		periods_elapsed=elapsed,
+		periods_elapsed=len(elapsed),
 		periods_covered=covered,
-		periods_behind=max(0, elapsed - 1 - covered),
-		expected_to_date=elapsed * amount,
-		paid=flt(contributed),
-		due_now=max(0.0, elapsed * amount - flt(contributed)),
-		arrears=max(0.0, (elapsed - 1) * amount - flt(contributed)),
-		paid_through=add_days(shift_period(first, frequency, covered), -1) if covered else None,
-		current_period_start=current,
-		current_period_end=current_end,
-		next_due_date=current_end if covered < elapsed else shift_period(first, frequency, covered),
-		started_on=first,
+		periods_behind=periods_behind,
+		expected_to_date=expected,
+		paid=paid,
+		due_now=max(0.0, expected - paid),
+		arrears=max(0.0, expected_past - paid),
+		paid_through=paid_through,
+		current_period_start=current.start if current else None,
+		current_period_end=current.end if current else None,
+		next_due_date=(next_open.start if next_open else None) if state == "up_to_date" else (
+			current.end if current else (first[0].start if first else None)
+		),
+		started_on=first[0].start if first else None,
 	)
 
 
 def loan_schedule(loan):
-	"""Equal monthly instalments from the disbursement date; returns what is due next."""
-	if loan.get("status") != "Active" or not loan.get("disbursed_on"):
+	"""Equal monthly instalments from the day the borrower confirmed the money arrived."""
+	if loan.get("status") != "Active":
+		return None
+	start = loan.get("received_on") or loan.get("disbursed_on")
+	if not start:
 		return None
 	count = max(1, cint(loan.tenure_months))
 	total, repaid = flt(loan.total_payable), flt(loan.amount_repaid)
 	instalment = total / count
-	start, now = getdate(loan.disbursed_on), getdate(today())
+	start, now = getdate(start), getdate(today())
 
 	rows, next_row, overdue = [], None, 0.0
 	for k in range(1, count + 1):
@@ -200,7 +284,7 @@ def refresh_member(member):
 		"Coop Member",
 		member,
 		{
-			"total_contributed": b.total_contributed,
+			"total_contributed": b.savings,
 			"total_repaid": b.total_repaid,
 			"loan_outstanding": b.loan_outstanding,
 			"borrow_limit": b.borrow_limit,

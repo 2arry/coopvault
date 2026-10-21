@@ -16,9 +16,10 @@ class CoopContribution(Document):
 		member = frappe.db.get_value("Coop Member", self.member, ["cooperative", "status"], as_dict=True)
 		if not member or member.cooperative != self.cooperative:
 			frappe.throw(_("Member does not belong to this cooperative"))
-		if self.is_new() and member.status != "Active":
+		if self.is_new() and member.status != "Active" and self.payment_method != "Paystack":
+			# A Paystack payment that already went through is recorded even if the member was suspended since
 			frappe.throw(_("Only active members can make contributions"))
-		if self.has_value_changed("status") and self.status in ("Confirmed", "Rejected"):
+		if self.has_value_changed("status") and self.status in ("Confirmed", "Rejected", "Reversed"):
 			self.reviewed_by = self.reviewed_by or frappe.session.user
 			self.reviewed_on = now_datetime()
 
@@ -26,8 +27,8 @@ class CoopContribution(Document):
 		refresh_all(member=self.member, cooperative=self.cooperative)
 
 	def on_trash(self):
-		if self.status == "Confirmed":
-			frappe.throw(_("Confirmed contributions cannot be deleted. Reject it instead."))
+		if self.status in ("Confirmed", "Reversed"):
+			frappe.throw(_("Confirmed contributions cannot be deleted"))
 
 	def after_delete(self):
 		refresh_all(member=self.member, cooperative=self.cooperative)

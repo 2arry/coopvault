@@ -1,5 +1,7 @@
 import frappe
 
+from coopvault.notify import ensure_vapid_keys
+
 ROLES = ["Coop Manager"]
 
 
@@ -11,11 +13,13 @@ def after_install():
 	make_roles()
 	setup_settings()
 	set_defaults()
+	ensure_vapid_keys()
 
 
 def after_migrate():
 	make_roles()
 	setup_settings()
+	ensure_vapid_keys()
 
 
 def make_roles():

@@ -1,6 +1,7 @@
 {
  "color": "#065f46",
- "creation": "2026-10-21 01:13:31.058635",
+ "creation": "2026-10-21 03:51:13.200571",
+ "currency": "NGN",
  "docstatus": 0,
  "doctype": "Number Card",
  "document_type": "Coop Member",
@@ -10,7 +11,7 @@
  "is_public": 1,
  "is_standard": 1,
  "label": "Active Members",
- "modified": "2026-10-21 01:13:31.058635",
+ "modified": "2026-10-21 03:51:13.200571",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Active Members",

@@ -25,11 +25,7 @@ class CoopLoanRepayment(Document):
 			loan.member_name,
 			loan.user,
 		)
-
-		becoming_confirmed = self.status == "Confirmed" and (
-			self.is_new() or self.get_doc_before_save().status != "Confirmed"
-		)
-		if self.is_new() or becoming_confirmed:
+		if self.is_new() and self.status == "Confirmed":
 			if loan.status != "Active":
 				frappe.throw(_("Repayments can only be made against an active loan"))
 			if flt(self.amount) > flt(loan.balance) + 0.005:
@@ -39,8 +35,7 @@ class CoopLoanRepayment(Document):
 						fmt_money(loan.balance, currency=currency)
 					)
 				)
-
-		if self.has_value_changed("status") and self.status in ("Confirmed", "Rejected"):
+		if self.has_value_changed("status") and self.status in ("Confirmed", "Rejected", "Reversed"):
 			self.reviewed_by = self.reviewed_by or frappe.session.user
 			self.reviewed_on = now_datetime()
 
@@ -48,8 +43,8 @@ class CoopLoanRepayment(Document):
 		refresh_all(member=self.member, cooperative=self.cooperative, loan=self.loan)
 
 	def on_trash(self):
-		if self.status == "Confirmed":
-			frappe.throw(_("Confirmed repayments cannot be deleted. Reject it instead."))
+		if self.status in ("Confirmed", "Reversed"):
+			frappe.throw(_("Confirmed repayments cannot be deleted"))
 
 	def after_delete(self):
 		refresh_all(member=self.member, cooperative=self.cooperative, loan=self.loan)

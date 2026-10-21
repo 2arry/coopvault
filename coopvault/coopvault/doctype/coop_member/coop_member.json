@@ -2,7 +2,7 @@
  "actions": [],
  "allow_rename": 0,
  "autoname": "hash",
- "creation": "2026-10-21 09:00:00.000000",
+ "creation": "2026-10-21 18:00:00.000000",
  "custom": 0,
  "doctype": "DocType",
  "editable_grid": 1,
@@ -16,6 +16,7 @@
   "role",
   "status",
   "joined_on",
+  "security_hold_until",
   "balances_section",
   "total_contributed",
   "total_repaid",
@@ -25,6 +26,7 @@
   "payout_section",
   "payout_bank_name",
   "payout_bank_code",
+  "payout_changed_on",
   "cb3",
   "payout_account_number",
   "payout_account_name",
@@ -36,6 +38,9 @@
   "autosave_next_date",
   "autosave_failures",
   "autosave_last_error",
+  "autosave_reminded_for",
+  "reminder_section",
+  "due_reminded_for",
   "dva_section",
   "paystack_customer_code",
   "dva_status",
@@ -61,7 +66,8 @@
    "in_standard_filter": 1,
    "label": "User",
    "options": "User",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fetch_from": "user.full_name",
@@ -104,6 +110,13 @@
    "label": "Joined On"
   },
   {
+   "description": "After a password reset, payout changes, loans and withdrawals wait until this time",
+   "fieldname": "security_hold_until",
+   "fieldtype": "Datetime",
+   "label": "Security Hold Until",
+   "read_only": 1
+  },
+  {
    "fieldname": "balances_section",
    "fieldtype": "Section Break",
    "label": "Balances"
@@ -111,7 +124,7 @@
   {
    "fieldname": "total_contributed",
    "fieldtype": "Currency",
-   "label": "Total Contributed",
+   "label": "Savings Balance",
    "read_only": 1
   },
   {
@@ -141,17 +154,24 @@
    "collapsible": 1,
    "fieldname": "payout_section",
    "fieldtype": "Section Break",
-   "label": "Payout Account (where loans are sent)"
+   "label": "Payout Account (where loans and withdrawals are sent)"
   },
   {
    "fieldname": "payout_bank_name",
    "fieldtype": "Data",
-   "label": "Bank"
+   "label": "Bank",
+   "read_only": 1
   },
   {
    "fieldname": "payout_bank_code",
    "fieldtype": "Data",
    "label": "Bank Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payout_changed_on",
+   "fieldtype": "Datetime",
+   "label": "Last Changed",
    "read_only": 1
   },
   {
@@ -161,7 +181,8 @@
   {
    "fieldname": "payout_account_number",
    "fieldtype": "Data",
-   "label": "Account Number"
+   "label": "Account Number",
+   "read_only": 1
   },
   {
    "fieldname": "payout_account_name",
@@ -217,6 +238,24 @@
    "read_only": 1
   },
   {
+   "fieldname": "autosave_reminded_for",
+   "fieldtype": "Date",
+   "label": "Reminder Sent For",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "reminder_section",
+   "fieldtype": "Section Break",
+   "label": "Reminders"
+  },
+  {
+   "fieldname": "due_reminded_for",
+   "fieldtype": "Date",
+   "label": "Due Reminder Sent For Period",
+   "read_only": 1
+  },
+  {
    "collapsible": 1,
    "fieldname": "dva_section",
    "fieldtype": "Section Break",
@@ -249,7 +288,8 @@
    "fieldname": "dva_account_number",
    "fieldtype": "Data",
    "label": "Account Number",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "dva_account_name",
@@ -266,7 +306,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 09:00:00.000000",
+ "modified": "2026-10-21 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Member",

@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_rename": 0,
- "creation": "2026-10-21 09:00:00.000000",
+ "creation": "2026-10-21 18:00:00.000000",
  "custom": 0,
  "doctype": "DocType",
  "editable_grid": 1,
@@ -10,6 +10,12 @@
   "frontend_url",
   "allow_signup",
   "allow_create_cooperative",
+  "security_section",
+  "session_idle_days",
+  "session_max_days",
+  "cb_security",
+  "confirm_after_days",
+  "security_hold_hours",
   "paystack_section",
   "paystack_enabled",
   "paystack_public_key",
@@ -27,7 +33,11 @@
   "fee_flat",
   "cb_fees",
   "fee_flat_waived_below",
-  "fee_cap"
+  "fee_cap",
+  "push_section",
+  "vapid_public_key",
+  "vapid_private_key",
+  "vapid_subject"
  ],
  "fields": [
   {
@@ -48,6 +58,40 @@
    "fieldname": "allow_create_cooperative",
    "fieldtype": "Check",
    "label": "Allow Members to Create Cooperatives"
+  },
+  {
+   "fieldname": "security_section",
+   "fieldtype": "Section Break",
+   "label": "Security"
+  },
+  {
+   "default": "7",
+   "fieldname": "session_idle_days",
+   "fieldtype": "Int",
+   "label": "Log Out After Days of Inactivity"
+  },
+  {
+   "default": "30",
+   "fieldname": "session_max_days",
+   "fieldtype": "Int",
+   "label": "Always Log Out After Days"
+  },
+  {
+   "fieldname": "cb_security",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "7",
+   "description": "If the member neither confirms nor disputes a transfer, it is treated as received",
+   "fieldname": "confirm_after_days",
+   "fieldtype": "Int",
+   "label": "Auto-confirm Loans and Withdrawals After Days"
+  },
+  {
+   "default": "72",
+   "fieldname": "security_hold_hours",
+   "fieldtype": "Int",
+   "label": "Hold After Password Reset (Hours)"
   },
   {
    "fieldname": "paystack_section",
@@ -119,7 +163,7 @@
   {
    "default": "wema-bank",
    "depends_on": "enable_dedicated_accounts",
-   "description": "Use test-bank with test keys",
+   "description": "Test keys always use test-bank",
    "fieldname": "dedicated_account_bank",
    "fieldtype": "Data",
    "label": "Dedicated Account Provider"
@@ -158,12 +202,36 @@
    "fieldname": "fee_cap",
    "fieldtype": "Currency",
    "label": "Fee Cap"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "push_section",
+   "fieldtype": "Section Break",
+   "label": "Push Notifications"
+  },
+  {
+   "fieldname": "vapid_public_key",
+   "fieldtype": "Small Text",
+   "label": "VAPID Public Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "vapid_private_key",
+   "fieldtype": "Password",
+   "label": "VAPID Private Key",
+   "read_only": 1
+  },
+  {
+   "default": "mailto:admin@example.com",
+   "fieldname": "vapid_subject",
+   "fieldtype": "Data",
+   "label": "VAPID Contact"
   }
  ],
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-21 09:00:00.000000",
+ "modified": "2026-10-21 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "CoopVault Settings",

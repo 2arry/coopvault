@@ -1,19 +1,28 @@
+import hashlib
+import secrets
+
 import frappe
 from frappe import _
 from frappe.rate_limiter import rate_limit
-from frappe.utils import add_days, cint, flt, today
+from frappe.utils import add_days, add_to_date, cint, flt, fmt_money, getdate, now_datetime, today
 
 from coopvault import paystack
-from coopvault.api import get_membership, is_super_user, require_login
+from coopvault.api import ensure_not_self, get_membership, is_super_user, require_login
 from coopvault.ledger import (
+	TRACKED,
 	contribution_standing,
 	cooperative_totals,
+	first_full_period,
 	loan_schedule,
 	member_balances,
 	period_start,
+	plan_on,
+	plans_for,
 	refresh_all,
 	shift_period,
 )
+from coopvault.notify import members_of, notify, staff_of
+from coopvault.utils import mask_account, require_password
 
 COOP_PUBLIC_FIELDS = [
 	"name",
@@ -32,13 +41,14 @@ COOP_PUBLIC_FIELDS = [
 	"account_name",
 	"account_verified",
 	"settlement_bank_code",
+	"bank_changed_on",
 	"accept_online_payments",
 	"fee_bearer",
 ]
-COOP_EDITABLE_FIELDS = [
-	f for f in COOP_PUBLIC_FIELDS if f not in ("name", "status", "account_verified", "settlement_bank_code")
-]
-BANK_FIELDS = ("bank_name", "account_number", "account_name")
+COOP_RULE_FIELDS = ["cooperative_name", "description", "loan_multiplier", "interest_rate", "max_loan_tenure_months",
+	"accept_online_payments", "fee_bearer"]
+RESET_CODE_MINUTES = 30
+CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
 def _membership_summary(member_name):
@@ -56,11 +66,25 @@ def _membership_summary(member_name):
 
 def _payout_defaults(user):
 	"""A new membership inherits the payout account the user already set elsewhere."""
-	fields = ["payout_bank_code", "payout_bank_name", "payout_account_number", "payout_account_name"]
+	fields = ["payout_bank_code", "payout_bank_name", "payout_account_number", "payout_account_name", "payout_changed_on"]
 	row = frappe.db.get_value(
 		"Coop Member", {"user": user, "payout_account_number": ["is", "set"]}, fields, as_dict=True
 	)
 	return dict(row) if row else {}
+
+
+def _announce(cooperative, title, message):
+	frappe.get_doc(
+		{
+			"doctype": "Coop Announcement",
+			"cooperative": cooperative,
+			"title": title,
+			"message": message,
+			"pinned": 1,
+			"is_system": 1,
+			"posted_by": frappe.session.user,
+		}
+	).insert(ignore_permissions=True)
 
 
 @frappe.whitelist()
@@ -85,7 +109,7 @@ def create_cooperative(cooperative_name, **kwargs):
 
 	coop = frappe.new_doc("Cooperative")
 	coop.cooperative_name = cooperative_name
-	for field in COOP_EDITABLE_FIELDS:
+	for field in COOP_RULE_FIELDS + ["contribution_amount", "contribution_frequency", "start_date"]:
 		if field in kwargs and kwargs[field] not in (None, ""):
 			coop.set(field, kwargs[field])
 	coop.created_by_user = user
@@ -125,6 +149,7 @@ def preview_invite(join_code):
 
 
 @frappe.whitelist(methods=["POST"])
+@rate_limit(limit=20, seconds=60 * 10)
 def join_cooperative(join_code):
 	user = require_login()
 	coop = frappe.db.get_value(
@@ -138,9 +163,11 @@ def join_cooperative(join_code):
 	existing = frappe.db.get_value(
 		"Coop Member", {"cooperative": coop.name, "user": user}, ["name", "status"], as_dict=True
 	)
+	full_name = frappe.db.get_value("User", user, "full_name")
 	if existing:
 		if existing.status == "Left":
 			frappe.db.set_value("Coop Member", existing.name, "status", "Pending")
+			_notify_join_request(coop.name, full_name)
 			return {"name": coop.name, "status": "Pending"}
 		return {"name": coop.name, "status": existing.status}
 
@@ -157,7 +184,19 @@ def join_cooperative(join_code):
 			**_payout_defaults(user),
 		}
 	).insert(ignore_permissions=True)
+	_notify_join_request(coop.name, full_name)
 	return {"name": coop.name, "status": "Pending"}
+
+
+def _notify_join_request(cooperative, full_name):
+	notify(
+		staff_of(cooperative),
+		_("{0} wants to join").format(full_name),
+		_("Approve or decline them in Manage → Review."),
+		link="/admin?tab=reviews",
+		cooperative=cooperative,
+		kind="join-request",
+	)
 
 
 def _loans_with_schedule(filters):
@@ -165,7 +204,8 @@ def _loans_with_schedule(filters):
 		"Coop Loan",
 		filters=filters,
 		fields=["name", "status", "principal", "total_payable", "amount_repaid", "balance", "due_date",
-			"disbursed_on", "tenure_months", "purpose", "application_date"],
+			"disbursed_on", "received_on", "tenure_months", "purpose", "application_date", "transfer_reference",
+			"payout_bank_name", "payout_account_number", "receipt_disputed"],
 		order_by="creation desc",
 	)
 	for loan in loans:
@@ -176,27 +216,42 @@ def _loans_with_schedule(filters):
 	return loans
 
 
+def _plan_info(cooperative):
+	"""The plan in force and any change scheduled for a later date."""
+	plans = plans_for(cooperative)
+	now = getdate(today())
+	current = plan_on(plans, now)
+	upcoming = next((p for p in plans if p.effective_from > now), None)
+	return {"current": current, "upcoming": upcoming}
+
+
+def _public_coop(cooperative, membership):
+	coop = frappe.db.get_value("Cooperative", cooperative, COOP_PUBLIC_FIELDS + ["join_code"], as_dict=True)
+	if not membership.is_admin:
+		coop.pop("join_code")
+		coop.account_number = mask_account(coop.account_number)
+	return coop
+
+
 @frappe.whitelist()
 def get_dashboard(cooperative):
 	from coopvault.api.payments import autosave_status, config, dedicated_account_status
 
 	membership = get_membership(cooperative)
-	coop = frappe.db.get_value("Cooperative", cooperative, COOP_PUBLIC_FIELDS + ["join_code"], as_dict=True)
-	if not membership.is_admin:
-		coop.pop("join_code")
-
 	data = {
-		"cooperative": coop,
+		"cooperative": _public_coop(cooperative, membership),
+		"plan": _plan_info(cooperative),
 		"membership": membership,
 		"pool": cooperative_totals(cooperative),
 		"payments": config(cooperative),
 		"announcements": frappe.get_all(
 			"Coop Announcement",
 			filters={"cooperative": cooperative},
-			fields=["name", "title", "message", "pinned", "posted_by", "creation"],
+			fields=["name", "title", "message", "pinned", "is_system", "posted_by", "creation"],
 			order_by="pinned desc, creation desc",
 			limit=5,
 		),
+		"unread_notifications": frappe.db.count("Coop Notification", {"user": frappe.session.user, "read": 0}),
 	}
 
 	if membership.name:
@@ -204,63 +259,124 @@ def get_dashboard(cooperative):
 		data["balances"] = balances
 		data["standing"] = contribution_standing(membership.name, balances.total_contributed)
 		data["active_loans"] = _loans_with_schedule(
-			{"member": membership.name, "status": ["in", ["Pending", "Active"]]}
+			{"member": membership.name, "status": ["in", ["Pending", "Sent", "Active"]]}
+		)
+		data["withdrawals"] = frappe.get_all(
+			"Coop Withdrawal",
+			filters={"member": membership.name, "status": ["in", ["Pending", "Sent"]]},
+			fields=["name", "amount", "status", "requested_on", "sent_on", "transfer_reference", "payout_bank_name",
+				"payout_account_number", "receipt_disputed"],
+			order_by="creation desc",
+		)
+		data["opening_balances"] = frappe.get_all(
+			"Coop Contribution",
+			filters={"member": membership.name, "status": "Pending", "payment_method": "Opening Balance"},
+			fields=["name", "amount", "contribution_date", "notes", "proposed_by"],
 		)
 		data["recent"] = get_statement(cooperative, limit=6)["entries"]
 		data["autosave"] = autosave_status(membership.name)
 		data["dedicated_account"] = dedicated_account_status(membership.name)
+		data["security_hold_until"] = frappe.db.get_value("Coop Member", membership.name, "security_hold_until")
 
 	if membership.is_admin:
 		data["period"] = period_summary(cooperative)
-		data["pending"] = {
-			"members": frappe.db.count("Coop Member", {"cooperative": cooperative, "status": "Pending"}),
-			"contributions": frappe.db.count(
-				"Coop Contribution", {"cooperative": cooperative, "status": "Pending"}
-			),
-			"loans": frappe.db.count("Coop Loan", {"cooperative": cooperative, "status": "Pending"}),
-			"repayments": frappe.db.count(
-				"Coop Loan Repayment", {"cooperative": cooperative, "status": "Pending"}
-			),
-		}
+		data["pending"] = pending_counts(cooperative)
 	return data
+
+
+def pending_counts(cooperative):
+	return {
+		"members": frappe.db.count("Coop Member", {"cooperative": cooperative, "status": "Pending"}),
+		"loans": frappe.db.count("Coop Loan", {"cooperative": cooperative, "status": "Pending"}),
+		"withdrawals": frappe.db.count("Coop Withdrawal", {"cooperative": cooperative, "status": "Pending"}),
+		"disputes": frappe.db.count("Coop Loan", {"cooperative": cooperative, "status": "Sent", "receipt_disputed": 1})
+		+ frappe.db.count("Coop Withdrawal", {"cooperative": cooperative, "status": "Sent", "receipt_disputed": 1}),
+	}
+
+
+def _has_contributions(cooperative):
+	return frappe.db.exists("Coop Contribution", {"cooperative": cooperative, "status": "Confirmed"})
 
 
 @frappe.whitelist(methods=["POST"])
 def update_cooperative(cooperative, **kwargs):
-	get_membership(cooperative, admin=True)
+	"""Rules and details (Admins only). A new contribution amount or frequency takes effect from the
+	start of the next period, so nobody is suddenly behind for months they already paid."""
+	get_membership(cooperative, owner=True)
 	coop = frappe.get_doc("Cooperative", cooperative)
-	for field in COOP_EDITABLE_FIELDS:
+	for field in COOP_RULE_FIELDS:
 		if field in kwargs:
-			if field in BANK_FIELDS and coop.account_verified and kwargs[field] != coop.get(field):
-				# A verified account can only be replaced through set_bank_account
-				continue
-			value = kwargs[field]
-			coop.set(field, (value or None) if field == "start_date" else value)
+			coop.set(field, kwargs[field])
+
+	change = None
+	amount = flt(kwargs.get("contribution_amount", coop.contribution_amount))
+	frequency = kwargs.get("contribution_frequency") or coop.contribution_frequency
+	started = _has_contributions(cooperative)
+	if "start_date" in kwargs and (kwargs["start_date"] or None) != (str(coop.start_date) if coop.start_date else None):
+		if started:
+			frappe.throw(_("The start date can't change once members have contributed"))
+		coop.start_date = kwargs["start_date"] or None
+
+	latest = coop.contribution_plans[-1] if coop.contribution_plans else None
+	if not latest or flt(latest.amount) != amount or latest.frequency != frequency:
+		if not started:
+			coop.contribution_plans = []
+			coop.contribution_amount, coop.contribution_frequency = amount, frequency
+		else:
+			effective = (
+				first_full_period(add_days(today(), 1), frequency) if frequency in TRACKED else getdate(add_days(today(), 1))
+			)
+			# Replace a change that hasn't started yet instead of stacking several
+			coop.contribution_plans = [r for r in coop.contribution_plans if getdate(r.effective_from) <= getdate(today())]
+			coop.append(
+				"contribution_plans",
+				{"effective_from": effective, "amount": amount, "frequency": frequency, "changed_by": frappe.session.user},
+			)
+			change = {"effective_from": effective, "amount": amount, "frequency": frequency}
 	coop.save(ignore_permissions=True)
+
+	if change:
+		every = {"Weekly": _("a week"), "Monthly": _("a month"), "Quarterly": _("a quarter")}.get(frequency)
+		text = (
+			_("From {0}, each member contributes {1} {2}. Earlier periods keep the old amount.").format(
+				frappe.utils.formatdate(change["effective_from"], "d MMMM yyyy"),
+				fmt_money(amount, currency=coop.currency),
+				every,
+			)
+			if every
+			else _("From {0}, contributions are flexible.").format(frappe.utils.formatdate(change["effective_from"], "d MMMM yyyy"))
+		)
+		_announce(cooperative, _("Contribution change"), text)
+		notify(members_of(cooperative), _("Contribution change"), text, link="/home", cooperative=cooperative, kind="plan")
+
 	refresh_all(cooperative=cooperative)
 	for m in frappe.get_all("Coop Member", filters={"cooperative": cooperative}, pluck="name"):
 		refresh_all(member=m)
-	return get_dashboard(cooperative)["cooperative"]
+	return {"cooperative": get_dashboard(cooperative)["cooperative"], "plan_change": change}
 
 
 @frappe.whitelist(methods=["POST"])
 def regenerate_join_code(cooperative):
 	from coopvault.coopvault.doctype.cooperative.cooperative import generate_join_code
 
-	get_membership(cooperative, admin=True)
+	get_membership(cooperative, owner=True)
 	code = generate_join_code()
 	frappe.db.set_value("Cooperative", cooperative, "join_code", code)
 	return {"join_code": code}
 
 
 @frappe.whitelist(methods=["POST"])
-def set_bank_account(cooperative, bank_code, account_number):
-	"""Verify the cooperative's bank account with Paystack and settle online payments into it."""
-	get_membership(cooperative, admin=True)
+@rate_limit(limit=10, seconds=60 * 10)
+def set_bank_account(cooperative, bank_code, account_number, password=None):
+	"""Verify the cooperative's bank account with Paystack and settle online payments into it.
+	Admins only, password required, and every member is told."""
+	get_membership(cooperative, owner=True)
+	require_password(password)
 	if not paystack.is_enabled():
-		frappe.throw(_("Online payments are not set up, so enter the bank details manually"))
+		frappe.throw(_("Online payments aren't set up yet"))
 	account_name = paystack.resolve_account(account_number, bank_code)
 	coop = frappe.get_doc("Cooperative", cooperative)
+	had_account = bool(coop.account_number)
 	coop.update(
 		{
 			"settlement_bank_code": bank_code,
@@ -268,25 +384,34 @@ def set_bank_account(cooperative, bank_code, account_number):
 			"account_number": account_number.strip(),
 			"account_name": account_name,
 			"account_verified": 1,
+			"bank_changed_on": now_datetime(),
+			"bank_changed_by": frappe.session.user,
 		}
 	)
 	coop.paystack_subaccount_code = paystack.upsert_subaccount(coop)
 	coop.save(ignore_permissions=True)
+
+	who = frappe.db.get_value("User", frappe.session.user, "full_name")
+	text = _("{0} set the cooperative's settlement account to {1} {2} ({3}). Online payments now go there.").format(
+		who, coop.bank_name, mask_account(coop.account_number), account_name
+	)
+	if had_account:
+		_announce(cooperative, _("Settlement account changed"), text)
+		notify(members_of(cooperative), _("Settlement account changed"), text, link="/announcements",
+			cooperative=cooperative, kind="bank-changed")
+	else:
+		notify(staff_of(cooperative), _("Settlement account connected"), text, cooperative=cooperative, kind="bank-changed")
 	return get_dashboard(cooperative)["cooperative"]
 
 
 def period_summary(cooperative):
 	"""Collection progress for the current contribution period."""
-	coop = frappe.db.get_value(
-		"Cooperative", cooperative, ["contribution_amount", "contribution_frequency"], as_dict=True
-	)
-	if coop.contribution_frequency not in ("Weekly", "Monthly", "Quarterly") or not flt(coop.contribution_amount):
+	plan = plan_on(plans_for(cooperative), today())
+	if plan.frequency not in TRACKED or not flt(plan.amount):
 		return None
-	start = period_start(today(), coop.contribution_frequency)
-	end = add_days(shift_period(start, coop.contribution_frequency), -1)
-	members = frappe.get_all(
-		"Coop Member", filters={"cooperative": cooperative, "status": "Active"}, pluck="name"
-	)
+	start = period_start(today(), plan.frequency)
+	end = add_days(shift_period(start, plan.frequency), -1)
+	members = frappe.get_all("Coop Member", filters={"cooperative": cooperative, "status": "Active"}, pluck="name")
 	counts = {"up_to_date": 0, "due": 0, "behind": 0, "not_started": 0}
 	for m in members:
 		state = contribution_standing(m).get("state")
@@ -298,10 +423,10 @@ def period_summary(cooperative):
 		fields=[{"SUM": "amount", "as": "total"}],
 	)
 	return {
-		"frequency": coop.contribution_frequency,
+		"frequency": plan.frequency,
 		"start": start,
 		"end": end,
-		"expected": flt(coop.contribution_amount) * len(members),
+		"expected": flt(plan.amount) * len(members),
 		"collected": flt(collected[0].total) if collected else 0.0,
 		"members": len(members),
 		**counts,
@@ -310,15 +435,15 @@ def period_summary(cooperative):
 
 @frappe.whitelist()
 def contribution_tracker(cooperative):
-	"""Who is up to date, who still owes this period and who is behind (admins only)."""
+	"""Who is up to date, who still owes this period and who is behind (admins and treasurer)."""
 	get_membership(cooperative, admin=True)
 	rows = []
 	for m in frappe.get_all(
 		"Coop Member",
 		filters={"cooperative": cooperative, "status": "Active"},
-		fields=["name", "full_name", "phone", "role", "joined_on", "total_contributed"],
+		fields=["name", "full_name", "phone", "role", "joined_on"],
 	):
-		standing = contribution_standing(m.name, m.total_contributed)
+		standing = contribution_standing(m.name)
 		last = frappe.get_all(
 			"Coop Contribution",
 			filters={"member": m.name, "status": "Confirmed"},
@@ -343,7 +468,8 @@ def list_members(cooperative, status=None):
 
 	fields = ["name", "full_name", "role", "status", "joined_on"]
 	if membership.is_admin:
-		fields += ["user", "phone", "total_contributed", "loan_outstanding", "borrow_limit", "creation"]
+		fields += ["user", "phone", "total_contributed", "loan_outstanding", "borrow_limit", "creation",
+			"payout_changed_on"]
 	members = frappe.get_all("Coop Member", filters=filters, fields=fields, order_by="full_name asc")
 	members.sort(key=lambda m: m.status != "Pending")
 	return members
@@ -364,20 +490,47 @@ def _ensure_admin_remains(m):
 
 @frappe.whitelist(methods=["POST"])
 def update_member(member, status=None, role=None):
+	"""Admins and the treasurer approve or decline join requests. Only Admins change roles or
+	suspend members, and nobody changes their own role or status."""
 	m = frappe.get_doc("Coop Member", member)
-	get_membership(m.cooperative, admin=True)
+	me = get_membership(m.cooperative, admin=True)
+	ensure_not_self(me, m.name, _("You can't change your own role or status. Ask another admin."))
+	coop_name = frappe.db.get_value("Cooperative", m.cooperative, "cooperative_name")
+	before_status, before_role = m.status, m.role
 
-	if role:
+	if role and role != m.role:
+		if not me.is_owner:
+			frappe.throw(_("Only the cooperative's admins can change roles"), frappe.PermissionError)
 		if role not in ("Member", "Treasurer", "Admin"):
 			frappe.throw(_("Invalid role"))
 		m.role = role
-	if status:
+	if status and status != m.status:
 		if status not in ("Pending", "Active", "Suspended", "Left"):
 			frappe.throw(_("Invalid status"))
+		is_join_decision = m.status == "Pending" and status in ("Active", "Left")
+		if not is_join_decision and not me.is_owner:
+			frappe.throw(_("Only the cooperative's admins can suspend or reinstate members"), frappe.PermissionError)
+		if status in ("Suspended", "Left") and m.status == "Active":
+			b = member_balances(m.name)
+			if status == "Left" and (b.savings > 0.005 or b.loan_outstanding > 0.005):
+				frappe.throw(_("This member still has savings or a loan. Suspend them instead."))
 		m.status = status
 
 	_ensure_admin_remains(m)
 	m.save(ignore_permissions=True)
+
+	if before_status == "Pending" and m.status == "Active":
+		notify(m.user, _("You're in! Welcome to {0}").format(coop_name), _("You can start saving now."),
+			link="/home", cooperative=m.cooperative, kind="join-approved")
+	elif before_status == "Pending" and m.status == "Left":
+		notify(m.user, _("Your request to join {0} was declined").format(coop_name), cooperative=m.cooperative,
+			kind="join-declined")
+	elif m.status != before_status:
+		notify(m.user, _("Your membership of {0} is now {1}").format(coop_name, _(m.status).lower()),
+			cooperative=m.cooperative, kind="membership")
+	if m.role != before_role:
+		notify(m.user, _("You're now {0} of {1}").format(_(m.role).lower() if m.role != "Member" else _("a member"),
+			coop_name), cooperative=m.cooperative, kind="membership")
 	return {"name": m.name, "status": m.status, "role": m.role}
 
 
@@ -387,13 +540,60 @@ def leave_cooperative(cooperative):
 	if not me.name:
 		frappe.throw(_("You are not a member of this cooperative"))
 	b = member_balances(me.name)
-	if b.loan_outstanding > 0 or b.pending_loans > 0:
-		frappe.throw(_("Please clear your outstanding loans before leaving"))
+	currency = frappe.db.get_value("Cooperative", cooperative, "currency")
+	if b.loan_outstanding > 0.005 or b.pending_loans > 0.005:
+		frappe.throw(_("Please repay your loan before leaving"))
+	if b.savings > 0.005 or b.withdrawal_requested > 0.005:
+		frappe.throw(
+			_("You still have {0} in savings. Request a withdrawal for all of it first, then you can leave.").format(
+				fmt_money(b.savings, currency=currency)
+			)
+		)
 	m = frappe.get_doc("Coop Member", me.name)
 	m.status = "Left"
 	_ensure_admin_remains(m)
 	m.save(ignore_permissions=True)
 	return {"ok": True}
+
+
+# Password reset codes (no email): an Admin creates a one-time code and passes it on ----
+
+
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=10, seconds=60 * 60)
+def create_reset_code(cooperative, member):
+	me = get_membership(cooperative, owner=True)
+	m = frappe.db.get_value("Coop Member", member, ["name", "user", "cooperative", "full_name", "phone"], as_dict=True)
+	if not m or m.cooperative != cooperative:
+		frappe.throw(_("Member not found"))
+	ensure_not_self(me, m.name, _("You can't reset your own password this way. Ask another admin."))
+	if frappe.db.get_value("User", m.user, "user_type") != "Website User":
+		frappe.throw(_("This account can't be reset here"))
+
+	raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
+	frappe.db.set_value("Coop Password Reset", {"user": m.user, "used_on": ["is", "not set"]}, "used_on", now_datetime())
+	expires = add_to_date(now_datetime(), minutes=RESET_CODE_MINUTES)
+	frappe.get_doc(
+		{
+			"doctype": "Coop Password Reset",
+			"user": m.user,
+			"cooperative": cooperative,
+			"code_hash": hashlib.sha256(raw.encode()).hexdigest(),
+			"created_by": frappe.session.user,
+			"expires_on": expires,
+		}
+	).insert(ignore_permissions=True)
+	who = frappe.db.get_value("User", frappe.session.user, "full_name")
+	notify(
+		staff_of(cooperative, exclude_users=[frappe.session.user, m.user]),
+		_("{0} created a password reset code for {1}").format(who, m.full_name),
+		cooperative=cooperative,
+		kind="security",
+	)
+	notify(m.user, _("A password reset code was created for you"), _("By {0}. If you didn't ask for this, tell your admins.").format(who),
+		cooperative=cooperative, kind="security", push=False)
+	return {"code": f"{raw[:4]}-{raw[4:]}", "expires_on": expires, "minutes": RESET_CODE_MINUTES,
+		"full_name": m.full_name, "phone": m.phone}
 
 
 # Announcements -----------------------------------------------------------------
@@ -405,7 +605,7 @@ def list_announcements(cooperative, limit=20, start=0):
 	return frappe.get_all(
 		"Coop Announcement",
 		filters={"cooperative": cooperative},
-		fields=["name", "title", "message", "pinned", "posted_by", "creation"],
+		fields=["name", "title", "message", "pinned", "is_system", "posted_by", "creation"],
 		order_by="pinned desc, creation desc",
 		limit=cint(limit),
 		start=cint(start),
@@ -424,6 +624,8 @@ def post_announcement(cooperative, title, message, pinned=0):
 			"pinned": cint(pinned),
 		}
 	).insert(ignore_permissions=True)
+	notify(members_of(cooperative, exclude_users=[frappe.session.user]), title, message[:180], link="/announcements",
+		cooperative=cooperative, kind="announcement")
 	return doc.as_dict()
 
 
@@ -431,6 +633,8 @@ def post_announcement(cooperative, title, message, pinned=0):
 def delete_announcement(name):
 	doc = frappe.get_doc("Coop Announcement", name)
 	get_membership(doc.cooperative, admin=True)
+	if doc.is_system:
+		frappe.throw(_("Automatic notices about money and settings can't be deleted"))
 	doc.delete(ignore_permissions=True)
 	return {"ok": True}
 
@@ -445,6 +649,8 @@ def get_statement(cooperative, member=None, limit=None):
 	if member and member != me.name:
 		if not me.is_admin:
 			frappe.throw(_("You can only view your own statement"), frappe.PermissionError)
+		if frappe.db.get_value("Coop Member", member, "cooperative") != cooperative:
+			frappe.throw(_("Member not found"), frappe.PermissionError)
 	else:
 		member = me.name
 	if not member:
@@ -453,58 +659,34 @@ def get_statement(cooperative, member=None, limit=None):
 	entries = []
 	for c in frappe.get_all(
 		"Coop Contribution",
-		filters={"member": member},
+		filters={"member": member, "status": ["!=", "Pending"]},
 		fields=["name", "amount", "contribution_date", "status", "payment_method", "creation"],
 	):
-		entries.append(
-			dict(
-				doctype="Coop Contribution",
-				name=c.name,
-				type="Contribution",
-				date=c.contribution_date,
-				amount=c.amount,
-				direction="in",
-				status=c.status,
-				method=c.payment_method,
-				creation=c.creation,
-			)
-		)
+		entries.append(dict(doctype="Coop Contribution", name=c.name, type="Contribution", date=c.contribution_date,
+			amount=c.amount, direction="in", status=c.status, method=c.payment_method, creation=c.creation))
 	for loan in frappe.get_all(
 		"Coop Loan",
-		filters={"member": member, "status": ["in", ["Pending", "Active", "Repaid", "Rejected"]]},
+		filters={"member": member, "status": ["in", ["Pending", "Sent", "Active", "Repaid", "Rejected"]]},
 		fields=["name", "principal", "application_date", "disbursed_on", "status", "creation"],
 	):
-		entries.append(
-			dict(
-				doctype="Coop Loan",
-				name=loan.name,
-				type="Loan",
-				date=loan.disbursed_on or loan.application_date,
-				amount=loan.principal,
-				direction="out",
-				status=loan.status,
-				creation=loan.creation,
-			)
-		)
+		entries.append(dict(doctype="Coop Loan", name=loan.name, type="Loan",
+			date=loan.disbursed_on or loan.application_date, amount=loan.principal, direction="out",
+			status=loan.status, creation=loan.creation))
 	for r in frappe.get_all(
 		"Coop Loan Repayment",
 		filters={"member": member},
 		fields=["name", "loan", "amount", "payment_date", "status", "payment_method", "creation"],
 	):
-		entries.append(
-			dict(
-				doctype="Coop Loan Repayment",
-				name=r.name,
-				type="Repayment",
-				loan=r.loan,
-				date=r.payment_date,
-				amount=r.amount,
-				direction="in",
-				status=r.status,
-				method=r.payment_method,
-				creation=r.creation,
-			)
-		)
+		entries.append(dict(doctype="Coop Loan Repayment", name=r.name, type="Repayment", loan=r.loan,
+			date=r.payment_date, amount=r.amount, direction="in", status=r.status, method=r.payment_method,
+			creation=r.creation))
+	for w in frappe.get_all(
+		"Coop Withdrawal",
+		filters={"member": member, "status": ["in", ["Pending", "Sent", "Completed", "Rejected"]]},
+		fields=["name", "amount", "requested_on", "sent_on", "status", "creation"],
+	):
+		entries.append(dict(doctype="Coop Withdrawal", name=w.name, type="Withdrawal", date=w.sent_on or w.requested_on,
+			amount=w.amount, direction="out", status=w.status, creation=w.creation))
 
 	entries.sort(key=lambda e: (str(e["date"]), str(e["creation"])), reverse=True)
 	if limit:
@@ -514,7 +696,7 @@ def get_statement(cooperative, member=None, limit=None):
 		"Coop Member",
 		member,
 		["name", "full_name", "phone", "role", "status", "joined_on", "payout_bank_name", "payout_account_number",
-			"payout_account_name"],
+			"payout_account_name", "payout_changed_on", "security_hold_until"],
 		as_dict=True,
 	)
 	balances = member_balances(member)
@@ -522,7 +704,7 @@ def get_statement(cooperative, member=None, limit=None):
 		"member": member_doc,
 		"balances": balances,
 		"standing": contribution_standing(member, balances.total_contributed),
-		"loans": _loans_with_schedule({"member": member, "status": ["in", ["Pending", "Active"]]}),
+		"loans": _loans_with_schedule({"member": member, "status": ["in", ["Pending", "Sent", "Active"]]}),
 		"entries": entries,
 	}
 
@@ -539,5 +721,5 @@ def pool_report(cooperative):
 		info = frappe.db.get_value("Coop Member", m, ["name", "full_name", "status", "role"], as_dict=True)
 		info.update(member_balances(m))
 		rows.append(info)
-	rows.sort(key=lambda r: -flt(r.total_contributed))
+	rows.sort(key=lambda r: -flt(r.savings))
 	return {"pool": cooperative_totals(cooperative), "members": rows}

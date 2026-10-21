@@ -1,7 +1,8 @@
 {
  "aggregate_function_based_on": "amount",
  "color": "#065f46",
- "creation": "2026-10-21 01:13:31.142902",
+ "creation": "2026-10-21 03:51:13.266432",
+ "currency": "NGN",
  "docstatus": 0,
  "doctype": "Number Card",
  "document_type": "Coop Contribution",
@@ -11,7 +12,7 @@
  "is_public": 1,
  "is_standard": 1,
  "label": "Total Savings",
- "modified": "2026-10-21 01:13:31.142902",
+ "modified": "2026-10-21 03:51:13.266432",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Total Savings",
