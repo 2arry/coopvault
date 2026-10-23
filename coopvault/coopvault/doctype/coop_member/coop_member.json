@@ -17,6 +17,7 @@
   "member_number",
   "status",
   "joined_on",
+  "added_by",
   "security_hold_until",
   "phone_changed_on",
   "balances_section",
@@ -96,7 +97,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Role",
-   "options": "Member\nTreasurer\nAccountant\nLoan Officer\nChairman\nAdmin"
+   "options": "Member\nTreasurer\nAccountant\nLoan Officer\nSecretary\nChairman\nAdmin"
   },
   {
    "description": "Given when the membership is approved",
@@ -119,6 +120,14 @@
    "fieldname": "joined_on",
    "fieldtype": "Date",
    "label": "Joined On"
+  },
+  {
+   "description": "The officer who added this member by hand (empty when they joined with the code)",
+   "fieldname": "added_by",
+   "fieldtype": "Link",
+   "label": "Added By",
+   "options": "User",
+   "read_only": 1
   },
   {
    "description": "After a password reset or phone change, payout changes, loans and withdrawals wait until this time",
@@ -330,7 +339,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 08:24:02.956776",
+ "modified": "2026-10-23 08:29:11.740662",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Member",

@@ -8,7 +8,7 @@ and never drift.
 import frappe
 from frappe.utils import add_days, add_months, cint, flt, getdate, today
 
-from coopvault import accounting, loans as loan_engine
+from coopvault import accounting, loans as loan_engine, savings as savings_engine
 
 OPEN_LOAN_STATES = ("Pending", "Approved", "Sent", "Active")
 MONEY_OUT_LOAN_STATES = ("Sent", "Active", "Repaid")
@@ -26,10 +26,12 @@ def _sum(doctype, field, filters):
 def member_balances(member, exclude_loan=None, exclude_withdrawal=None):
 	"""Savings and borrowing position of a Coop Member.
 
-	savings      = confirmed contributions - withdrawals paid out
-	borrow_limit = (savings - pending withdrawals - guarantees given) x multiplier - (owed on loans + pending requests)
+	savings      = confirmed contributions - withdrawals paid out (+ any surplus shared out), all products
+	borrow_limit = (savings that count for borrowing - pending withdrawals - guarantees given) x multiplier
+	               - (owed on loans + pending requests)
 	With the default multiplier of 1 nobody can owe more than they have saved. Savings promised as a
-	guarantor for someone else's loan are held until that loan is repaid.
+	guarantor for someone else's loan are held until that loan is repaid. `products` has each
+	savings product's balance and what can be withdrawn from it (see savings.position).
 	"""
 	cooperative = frappe.db.get_value("Coop Member", member, "cooperative")
 	# The most generous loan product sets the headline limit (each product checks its own share)
@@ -42,7 +44,6 @@ def member_balances(member, exclude_loan=None, exclude_withdrawal=None):
 	if exclude_withdrawal:
 		withdrawal_filters["name"] = ["!=", exclude_withdrawal]
 	withdrawn = _sum("Coop Withdrawal", "amount", {**withdrawal_filters, "status": ["in", WITHDRAWN_STATES]})
-	withdrawal_requested = _sum("Coop Withdrawal", "amount", {**withdrawal_filters, "status": ["in", ["Pending", "Approved"]]})
 
 	loan_filters = {"member": member, "status": ["in", OPEN_LOAN_STATES]}
 	if exclude_loan:
@@ -51,25 +52,30 @@ def member_balances(member, exclude_loan=None, exclude_withdrawal=None):
 	outstanding = sum(flt(l.balance) for l in loans if l.status in OWED_LOAN_STATES)
 	pending = sum(flt(l.principal) for l in loans if l.status in ("Pending", "Approved"))
 	exposure = outstanding + pending
-	# What the group owes the member, from the books: contributions, less withdrawals, plus any
-	# surplus shared out to them
-	savings = accounting.member_savings(member)
 	pledged = loan_engine.pledged_by(member, exclude_loan=exclude_loan)
+	# What the group owes the member, from the books, by savings product
+	pos = savings_engine.position(member, hold=exposure + pledged, exclude_withdrawal=exclude_withdrawal)
 
 	return frappe._dict(
-		savings=savings,
+		savings=pos.total,
+		products=pos.rows,
 		total_contributed=contributed,
+		dues_paid=savings_engine.dues_paid(member),
 		total_withdrawn=withdrawn,
-		withdrawal_requested=withdrawal_requested,
+		withdrawal_requested=pos.requested,
 		total_repaid=repaid,
 		loan_outstanding=outstanding,
 		pending_loans=pending,
 		exposure=exposure,
 		multiplier=multiplier,
 		pledged=pledged,
-		borrow_limit=max(0.0, (savings - withdrawal_requested - pledged) * multiplier - exposure),
+		# Savings that back borrowing: products that count for it, less pending withdrawals
+		lendable=pos.counting_free,
+		borrow_limit=max(0.0, (pos.counting_free - pledged) * multiplier - exposure),
 		# Savings that aren't backing a loan, a pending request or a guarantee can be taken out
-		withdrawable=max(0.0, savings - withdrawal_requested - exposure - pledged),
+		withdrawable=pos.withdrawable,
+		pledgeable=pos.pledgeable,
+		leaving_amount=pos.leaving_amount,
 	)
 
 
@@ -193,7 +199,8 @@ def contribution_standing(member, contributed=None):
 	if start_date and getdate(start_date) > anchor:
 		anchor = getdate(start_date)
 	if contributed is None:
-		contributed = _sum("Coop Contribution", "amount", {"member": member, "status": "Confirmed"})
+		# Only regular contributions count against the plan; voluntary savings are extra
+		contributed = savings_engine.dues_paid(member)
 	paid = flt(contributed)
 
 	elapsed = _periods(plans, anchor, now)

@@ -16,7 +16,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, add_months, cint, flt, get_datetime, getdate, now_datetime, today
 
-from coopvault import paystack, postings
+from coopvault import paystack, postings, savings
 from coopvault.api import get_membership, require_login
 from coopvault.ledger import TRACKED, contribution_standing, plan_on, plans_for, refresh_all
 from coopvault.notify import notify, staff_of
@@ -36,7 +36,7 @@ def _coop(cooperative):
 		"Cooperative",
 		cooperative,
 		["name", "cooperative_name", "currency", "accept_online_payments", "fee_bearer", "paystack_subaccount_code",
-			"contribution_frequency"],
+			"contribution_frequency", "auto_allocate"],
 		as_dict=True,
 	)
 
@@ -117,8 +117,14 @@ def _check_repayment(me, loan, amount, currency):
 		frappe.throw(_("Amount exceeds the loan balance of {0}").format(money_text(ln.balance, currency)))
 
 
+PURPOSE_LABELS = {"Contribution": _("Savings"), "Loan Repayment": _("Loan repayment"), "Split": _("Dues, loans and savings")}
+
+
 @frappe.whitelist(methods=["POST"])
-def initialize(cooperative, purpose, amount, loan=None, save_method=0, setup_autosave=0):
+def initialize(cooperative, purpose, amount=None, loan=None, save_method=0, setup_autosave=0, savings_product=None,
+		allocations=None):
+	"""Start a checkout. A Split payment shares one charge across several things (allocations:
+	[{kind: "savings", savings_product} | {kind: "loan", loan}, with an amount each])."""
 	if not paystack.is_enabled():
 		frappe.throw(_("Online payments aren't switched on yet. Ask your admin."))
 	me = get_membership(cooperative)
@@ -128,17 +134,30 @@ def initialize(cooperative, purpose, amount, loan=None, save_method=0, setup_aut
 	if not coop.accept_online_payments:
 		frappe.throw(_("{0} is not accepting online payments").format(coop.cooperative_name))
 
+	if purpose == "Split":
+		if isinstance(allocations, str):
+			allocations = json.loads(allocations or "[]")
+		allocations = savings.check_allocations(me.name, allocations, coop.currency)
+		amount, loan, savings_product = sum(a["amount"] for a in allocations), None, None
+	else:
+		allocations = None
 	amount = flt(amount, 2)
 	if amount < MIN_ONLINE_AMOUNT:
 		frappe.throw(_("Minimum online payment is {0}").format(money_text(MIN_ONLINE_AMOUNT, coop.currency)))
 	if purpose == "Loan Repayment":
 		_check_repayment(me, loan, amount, coop.currency)
+		savings_product = None
 	elif purpose == "Contribution":
 		loan = None
-	else:
+		product = savings.get(cooperative, savings_product)
+		if not product.enabled:
+			frappe.throw(_("{0} isn't open for saving").format(product.product_name))
+		savings_product = product.name
+	elif purpose != "Split":
 		frappe.throw(_("Invalid payment purpose"))
 
-	setup_autosave = cint(setup_autosave) and purpose == "Contribution"
+	# Autosave pays the regular contribution only
+	setup_autosave = cint(setup_autosave) and purpose == "Contribution" and savings_product == savings.regular(cooperative)
 	save_method = cint(save_method) or setup_autosave
 	fee = _fee_for(coop, amount)
 	total = flt(amount + fee, 2)
@@ -160,7 +179,7 @@ def initialize(cooperative, purpose, amount, loan=None, save_method=0, setup_aut
 			"custom_fields": [
 				{"display_name": "Cooperative", "variable_name": "cooperative", "value": coop.cooperative_name},
 				{"display_name": "Member", "variable_name": "member", "value": me.full_name},
-				{"display_name": "For", "variable_name": "purpose", "value": purpose},
+				{"display_name": "For", "variable_name": "purpose", "value": PURPOSE_LABELS[purpose]},
 			],
 		},
 		**_split(coop),
@@ -186,6 +205,8 @@ def initialize(cooperative, purpose, amount, loan=None, save_method=0, setup_aut
 			"member": me.name,
 			"user": me.user,
 			"loan": loan,
+			"savings_product": savings_product,
+			"allocations": json.dumps(allocations) if allocations else None,
 			"save_method": save_method,
 			"setup_autosave": setup_autosave,
 			"access_code": data.get("access_code"),
@@ -214,6 +235,8 @@ def _tx_summary(tx):
 		"currency": tx.currency,
 		"cooperative": tx.cooperative,
 		"loan": tx.loan,
+		"savings_product": tx.savings_product,
+		"allocations": json.loads(tx.allocations) if tx.allocations else None,
 		"channel": tx.channel,
 		"message": tx.message,
 		"document_type": tx.reference_doctype,
@@ -254,8 +277,9 @@ def mark_abandoned(reference):
 	return {"ok": True}
 
 
-def _record_payment(tx, method="Paystack", note=None):
-	"""Create the confirmed contribution / repayment for a successful transaction.
+def _record_payment(tx, method="Paystack", note=None, reviewed_by="Administrator"):
+	"""Create the confirmed contributions / repayments for a successful transaction (one for each
+	part of a split payment). Returns the first.
 
 	A repayment larger than what is still owed (e.g. the loan was settled another way in
 	the meantime) is split: the balance clears the loan and the rest is saved, so money that
@@ -265,7 +289,7 @@ def _record_payment(tx, method="Paystack", note=None):
 		"payment_method": method,
 		"reference": tx.reference,
 		"status": "Confirmed",
-		"reviewed_by": "Administrator",
+		"reviewed_by": reviewed_by,
 	}
 
 	def insert(values):
@@ -276,24 +300,56 @@ def _record_payment(tx, method="Paystack", note=None):
 		doc.flags.payment_tx = tx
 		return doc.insert(ignore_permissions=True)
 
-	amount = flt(tx.amount)
-	docs = []
-	if tx.purpose == "Loan Repayment" and tx.loan:
-		loan = frappe.db.get_value("Coop Loan", tx.loan, ["status", "balance"], as_dict=True)
-		repay = min(amount, flt(loan.balance)) if loan and loan.status == "Active" else 0
-		if repay > 0:
+	if tx.purpose == "Split" and tx.allocations:
+		lines = json.loads(tx.allocations)
+	elif tx.purpose == "Loan Repayment" and tx.loan:
+		lines = [{"kind": "loan", "loan": tx.loan, "amount": flt(tx.amount)}]
+	else:
+		lines = [{"kind": "savings", "savings_product": tx.get("savings_product"), "amount": flt(tx.amount)}]
+	# Split lines add up to what was charged; anything they don't cover (rounding) is saved
+	extra = flt(flt(tx.amount) - sum(flt(x["amount"]) for x in lines), 2)
+	if extra > 0:
+		savings.add_savings(lines, savings.extra_product(tx.cooperative), extra)
+
+	docs, overpaid = [], 0.0
+	for line in lines:
+		amount = flt(line["amount"], 2)
+		if line["kind"] == "loan":
+			loan = frappe.db.get_value("Coop Loan", line["loan"], ["status", "balance"], as_dict=True)
+			repay = min(amount, flt(loan.balance)) if loan and loan.status == "Active" else 0
+			if repay > 0:
+				docs.append(
+					insert({"doctype": "Coop Loan Repayment", "loan": line["loan"], "amount": repay,
+						"payment_date": today(), "notes": note, **common})
+				)
+			overpaid = flt(overpaid + amount - repay, 2)
+		elif amount > 0:
 			docs.append(
-				insert({"doctype": "Coop Loan Repayment", "loan": tx.loan, "amount": repay, "payment_date": today(),
+				insert({"doctype": "Coop Contribution", "cooperative": tx.cooperative, "member": tx.member,
+					"amount": amount, "savings_product": line.get("savings_product"), "contribution_date": today(),
 					"notes": note, **common})
 			)
-		amount = flt(amount - repay, 2)
-		note = _("Overpayment on loan {0}, added to savings").format(tx.loan) if amount > 0 else note
-	if amount > 0:
+	if overpaid > 0:
 		docs.append(
 			insert({"doctype": "Coop Contribution", "cooperative": tx.cooperative, "member": tx.member,
-				"amount": amount, "contribution_date": today(), "notes": note, **common})
+				"amount": overpaid, "savings_product": savings.extra_product(tx.cooperative),
+				"contribution_date": today(), "notes": _("Overpayment on a loan, added to savings"), **common})
 		)
 	return docs[0]
+
+
+def _share_transfer(tx, coop):
+	"""A transfer to a member's account number pays what's due first, when the group has that on."""
+	if not cint(coop.auto_allocate) or tx.purpose != "Contribution" or tx.allocations:
+		return
+	if frappe.db.get_value("Coop Member", tx.member, "status") != "Active":
+		return
+	lines = savings.share_out(tx.member, flt(tx.amount))
+	if len(lines) == 1 and lines[0]["kind"] == "savings":
+		tx.savings_product = lines[0]["savings_product"]
+	else:
+		tx.purpose = "Split"
+		tx.allocations = json.dumps(lines, default=str)
 
 
 def _save_authorization(user, data, reference=None):
@@ -369,6 +425,7 @@ def _complete(reference, data, method="Paystack"):
 		if coop.fee_bearer == "Member" and 0 < tx.settled_amount < flt(tx.amount):
 			# Transfers have no checkout to add the fee to, so the member is credited what arrived
 			tx.amount = tx.settled_amount
+		_share_transfer(tx, coop)
 	doc = _record_payment(tx, method=method)
 
 	if tx.save_method and tx.user:
@@ -404,7 +461,10 @@ def settled_amount(tx, data):
 
 def _notify_payment(tx, doc):
 	currency = tx.currency
-	what = _("towards your loan") if doc.doctype == "Coop Loan Repayment" else _("to your savings")
+	if tx.purpose == "Split":
+		what = _("across your dues, loans and savings")
+	else:
+		what = _("towards your loan") if doc.doctype == "Coop Loan Repayment" else _("to your savings")
 	via = {"Autosave": _(" by Autosave"), "Dedicated Account": _(" by transfer to your account number")}.get(tx.source, "")
 	fee = flt(flt(tx.charged_amount) - flt(tx.amount), 2) if tx.source == "Dedicated Account" else 0
 	notify(

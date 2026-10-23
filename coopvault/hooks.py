@@ -52,6 +52,9 @@ scheduler_events = {
 		"coopvault.jobs.loans_daily",
 		"coopvault.jobs.daily_cleanup",
 	],
+	"hourly": [
+		"coopvault.api.meetings.remind_meetings",
+	],
 	"cron": {
 		# Autosave charges go out at 09:00 in the site time zone (Africa/Lagos by default)
 		"0 9 * * *": [

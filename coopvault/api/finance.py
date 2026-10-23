@@ -13,7 +13,7 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import cint, flt, getdate, now_datetime, today
 
-from coopvault import approvals, loans
+from coopvault import approvals, loans, savings
 from coopvault.api import can, ensure_not_self, get_membership, require
 from coopvault.ledger import cooperative_totals, loan_schedule, member_balances
 from coopvault.notify import holders, notify, staff_of
@@ -43,7 +43,7 @@ def _list(doctype, cooperative, me, scope, status, fields, limit, start, extra_f
 
 CONTRIBUTION_FIELDS = [
 	"name", "member", "member_name", "amount", "contribution_date", "status", "payment_method",
-	"reference", "notes", "review_note", "creation",
+	"reference", "notes", "review_note", "creation", "savings_product",
 ]
 
 
@@ -446,7 +446,7 @@ def list_repayments(cooperative, scope="mine", status=None, loan=None, limit=50,
 WITHDRAWAL_FIELDS = [
 	"name", "member", "member_name", "amount", "reason", "status", "requested_on", "sent_on", "received_on",
 	"transfer_reference", "payout_bank_name", "payout_account_number", "payout_account_name", "receipt_disputed",
-	"dispute_note", "review_note", "creation",
+	"dispute_note", "review_note", "creation", "savings_product", "leaving",
 ]
 
 
@@ -485,7 +485,7 @@ def respond_guarantee(loan, accept, note=None):
 		frappe.throw(_("There's nothing to answer here"))
 	accept = accept in (True, 1, "1", "true", "True")
 	if accept:
-		free = member_balances(me.name).withdrawable
+		free = member_balances(me.name).pledgeable
 		if flt(row.amount) > free + 0.005:
 			frappe.throw(_("You can guarantee at most {0} right now").format(_money(free, doc.cooperative)))
 	frappe.db.set_value("Coop Loan Guarantor", row.name, {"status": "Accepted" if accept else "Declined",
@@ -520,7 +520,7 @@ def replace_guarantor(loan, member, new_member, amount=None):
 			any(g.member == new_member for g in doc.guarantors):
 		frappe.throw(_("Choose another active member who isn't already a guarantor"))
 	amount = flt(amount) or flt(row.amount)
-	free = member_balances(new_member).withdrawable
+	free = member_balances(new_member).pledgeable
 	if amount > free + 0.005:
 		frappe.throw(_("{0} can guarantee at most {1} right now").format(m.full_name, _money(free, doc.cooperative)))
 	frappe.db.set_value("Coop Loan Guarantor", row.name, {"member": new_member, "member_name": m.full_name, "user": m.user,
@@ -631,6 +631,84 @@ def save_loan_product(cooperative, product_name, name=None, **values):
 	return _products(cooperative, enabled_only=False)
 
 
+# Savings products ------------------------------------------------------------------------------
+
+SAVINGS_FIELDS = ["product_name", "description", "enabled", "withdrawal_rule", "counts_for_borrowing"]
+
+
+@frappe.whitelist()
+def savings_products(cooperative):
+	"""What members can save into, with the member's own balance in each."""
+	me = get_membership(cooperative, allow_inactive=True)
+	held = {r.product: r for r in member_balances(me.name).products} if me.name else {}
+	out = []
+	for p in savings.products(cooperative):
+		mine = held.get(p.name)
+		if not p.enabled and not (mine and mine.balance > 0.005):
+			continue
+		out.append({**{k: p.get(k) for k in ["name", "product_name", "kind", "description", "enabled", "withdrawal_rule",
+			"counts_for_borrowing"]}, "balance": mine.balance if mine else 0.0,
+			"withdrawable": mine.withdrawable if mine else 0.0})
+	return out
+
+
+@frappe.whitelist()
+def admin_savings_products(cooperative):
+	get_membership(cooperative, admin=True)
+	rows = savings.products(cooperative)
+	held = dict(frappe.db.sql(
+		"""select account, coalesce(sum(credit - debit), 0) from `tabCoop Journal Line`
+		where cooperative = %s and is_posted = 1 and account_type = 'Member Savings' group by account""",
+		cooperative,
+	))
+	for p in rows:
+		p.total_held = flt(held.get(p.account), 2)
+		p.savers = frappe.db.sql(
+			"""select count(distinct member) from `tabCoop Journal Line` where account = %s and is_posted = 1""",
+			p.account,
+		)[0][0]
+	return rows
+
+
+@frappe.whitelist(methods=["POST"])
+def save_savings_product(cooperative, product_name, name=None, **values):
+	get_membership(cooperative, capability="settings")
+	doc = frappe.get_doc("Coop Savings Product", name) if name else frappe.new_doc("Coop Savings Product")
+	if name and doc.cooperative != cooperative:
+		frappe.throw(_("Savings product not found"))
+	doc.cooperative = cooperative
+	doc.product_name = product_name
+	if not name:
+		doc.kind = savings.VOLUNTARY
+	for field in SAVINGS_FIELDS:
+		if field in values and field != "product_name":
+			doc.set(field, values[field])
+	doc.save(ignore_permissions=True)
+	return admin_savings_products(cooperative)
+
+
+@frappe.whitelist()
+def payment_plan(cooperative):
+	"""What to suggest on the Pay screen: what's due now (dues, then loan instalments), every
+	active loan, and the savings products, so one payment can cover several of them."""
+	me = get_membership(cooperative)
+	if not me.name:
+		frappe.throw(_("Only members can pay"))
+	loans_rows = frappe.get_all(
+		"Coop Loan", filters={"member": me.name, "status": "Active"},
+		fields=["name", "product", "balance", "overdue_amount"], order_by="disbursed_on asc, creation asc",
+	)
+	for ln in loans_rows:
+		ln.product_name = ln.product and frappe.db.get_value("Coop Loan Product", ln.product, "product_name")
+	return {
+		"due": savings.due_lines(me.name),
+		"loans": loans_rows,
+		"products": [{k: p.get(k) for k in ["name", "product_name", "kind", "description"]}
+			for p in savings.products(cooperative, enabled_only=True)],
+		"extra_product": savings.extra_product(cooperative),
+	}
+
+
 def _withdrawing_member(cooperative):
 	"""Active members withdraw savings; someone who has left can still take out money that
 	reached the group after they left (e.g. a late transfer to their old account number)."""
@@ -659,7 +737,8 @@ def withdrawal_eligibility(cooperative):
 
 @frappe.whitelist(methods=["POST"])
 @rate_limit(limit=10, seconds=60 * 60)
-def request_withdrawal(cooperative, amount, reason=None):
+def request_withdrawal(cooperative, amount, reason=None, savings_product=None, leaving=0):
+	"""Ask to take savings out of one product, or (leaving=1) everything, to leave the group."""
 	me = _withdrawing_member(cooperative)
 	check_hold(me.name)
 	if not frappe.db.get_value("Coop Member", me.name, "payout_account_number"):
@@ -673,13 +752,21 @@ def request_withdrawal(cooperative, amount, reason=None):
 			"member": me.name,
 			"amount": flt(amount),
 			"reason": reason,
+			"savings_product": None if cint(leaving) else savings_product,
+			"leaving": cint(leaving),
 			"status": "Pending",
 			"requested_on": today(),
 		}
 	).insert(ignore_permissions=True)
+	if doc.leaving:
+		summary = _("{0} asked to take out all {1} to leave the group").format(me.full_name, _money(doc.amount, cooperative))
+	elif savings.get(cooperative, doc.savings_product).kind == savings.REGULAR:
+		summary = _("{0} asked to withdraw {1}").format(me.full_name, _money(doc.amount, cooperative))
+	else:
+		summary = _("{0} asked to withdraw {1} from {2}").format(me.full_name, _money(doc.amount, cooperative),
+			savings.get(cooperative, doc.savings_product).product_name)
 	approvals.request(
-		cooperative, "Withdrawal", ("Coop Withdrawal", doc.name), amount=doc.amount, beneficiary=me.name,
-		summary=_("{0} asked to withdraw {1}").format(me.full_name, _money(doc.amount, cooperative)),
+		cooperative, "Withdrawal", ("Coop Withdrawal", doc.name), amount=doc.amount, beneficiary=me.name, summary=summary,
 	)
 	return doc.as_dict()
 
@@ -698,6 +785,7 @@ def get_withdrawal(name):
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 	data = {f: doc.get(f) for f in WITHDRAWAL_FIELDS}
 	data["cooperative"] = doc.cooperative
+	data["product_name"] = None if doc.leaving else savings.get(doc.cooperative, doc.savings_product).product_name
 	data["currency"] = frappe.db.get_value("Cooperative", doc.cooperative, "currency")
 	data["is_mine"] = doc.member == me.name
 	data["confirm_after_days"] = cint(frappe.db.get_single_value("CoopVault Settings", "confirm_after_days")) or 7
@@ -882,7 +970,12 @@ def get_receipt(doctype, name):
 	coop = frappe.db.get_value("Cooperative", doc.cooperative, ["cooperative_name", "currency"], as_dict=True)
 	automatic = doc.status == "Confirmed" and doc.payment_method == "Paystack"
 	reviewer = doc.reviewed_by and not automatic and frappe.db.get_value("User", doc.reviewed_by, "full_name")
+	product = doc.get("savings_product") and savings.get(doc.cooperative, doc.savings_product)
+	if product and product.kind != savings.REGULAR:
+		label = product.product_name
 	return {
+		"parts": _receipt_parts(doc),
+		"product_name": product.product_name if product else None,
 		"doctype": doctype,
 		"name": doc.name,
 		"kind": _("Opening balance") if doc.payment_method == "Opening Balance" else label,
@@ -904,13 +997,31 @@ def get_receipt(doctype, name):
 	}
 
 
+def _receipt_parts(doc):
+	"""Every part of the payment this document came from, when one payment was shared out."""
+	if not doc.reference or not frappe.db.exists("Coop Payment Transaction", doc.reference):
+		return []
+	parts = []
+	for doctype in RECEIPT_DOCTYPES:
+		for row in frappe.get_all(doctype, filters={"reference": doc.reference, "member": doc.member},
+				fields=["name", "amount", "status"] + (["loan"] if doctype == "Coop Loan Repayment" else ["savings_product"]),
+				order_by="creation asc"):
+			if doctype == "Coop Loan Repayment":
+				what = _("Loan {0}").format(row.loan)
+			else:
+				what = savings.get(doc.cooperative, row.savings_product).product_name
+			parts.append({"doctype": doctype, "name": row.name, "amount": row.amount, "status": row.status, "label": what,
+				"loan": row.get("loan")})
+	return parts if len(parts) > 1 else []
+
+
 # Offline payments (recorded by one officer, approved by another) ---------------------------
 
 
 @frappe.whitelist(methods=["POST"])
 @rate_limit(limit=60, seconds=60 * 10)
 def record_offline_payment(cooperative, member, amount, payment_date, reference, payment_method="Bank Transfer",
-		loan=None, note=None):
+		loan=None, note=None, savings_product=None):
 	"""A transfer or cash payment made outside Paystack. It's entered as text (no receipts or
 	images) and only counts once another officer checks it arrived and approves it."""
 	me = get_membership(cooperative, capability="record")
@@ -944,8 +1055,10 @@ def record_offline_payment(cooperative, member, amount, payment_date, reference,
 		doc = frappe.get_doc({"doctype": "Coop Loan Repayment", "loan": loan, "payment_date": payment_date, **common})
 		what = _("loan repayment")
 	else:
-		doc = frappe.get_doc({"doctype": "Coop Contribution", "contribution_date": payment_date, **common})
-		what = _("savings")
+		product = savings.get(cooperative, savings_product)
+		doc = frappe.get_doc({"doctype": "Coop Contribution", "contribution_date": payment_date,
+			"savings_product": product.name, **common})
+		what = _("savings") if product.kind == savings.REGULAR else product.product_name
 	doc.insert(ignore_permissions=True)
 	approvals.request(
 		cooperative, "Offline payment", (doc.doctype, doc.name), amount=amount, beneficiary=member,
@@ -991,29 +1104,20 @@ def allocate_unmatched(reference, member):
 	m = frappe.db.get_value("Coop Member", member, ["name", "cooperative", "user", "full_name"], as_dict=True)
 	if not m or m.cooperative != tx.cooperative:
 		frappe.throw(_("Member not found"))
-	doc = frappe.get_doc(
-		{
-			"doctype": "Coop Contribution",
-			"cooperative": tx.cooperative,
-			"member": member,
-			"amount": tx.amount,
-			"contribution_date": today(),
-			"payment_method": "Bank Transfer",
-			"reference": tx.reference,
-			"status": "Confirmed",
-			"reviewed_by": frappe.session.user,
-			"notes": _("Transfer matched by {0}").format(me.full_name),
-		}
-	)
-	doc.flags.money_received = True
-	doc.insert(ignore_permissions=True)
-	tx.update({"status": "Success", "allocated_to": member, "member": member, "user": m.user,
-		"reference_doctype": doc.doctype, "reference_name": doc.name})
+	from coopvault.api import payments
+
+	# Shared out like any transfer to the member's own account number (dues, instalments, savings)
+	tx.update({"member": member, "user": m.user})
+	payments._share_transfer(tx, payments._coop(tx.cooperative))
+	doc = payments._record_payment(tx, method="Bank Transfer", note=_("Transfer matched by {0}").format(me.full_name),
+		reviewed_by=frappe.session.user)
+	tx.update({"status": "Success", "allocated_to": member, "reference_doctype": doc.doctype, "reference_name": doc.name})
 	tx.save(ignore_permissions=True)
-	notify(m.user, _("{0} added to your savings").format(_money(doc.amount, tx.cooperative)),
+	what = _("shared across your dues, loans and savings") if tx.purpose == "Split" else _("added to your savings")
+	notify(m.user, _("{0} {1}").format(_money(tx.amount, tx.cooperative), what),
 		_("A transfer you sent was matched to you by {0}.").format(me.full_name),
-		link=f"/receipt/Coop Contribution/{doc.name}", cooperative=tx.cooperative, kind="payment")
-	return {"ok": True, "contribution": doc.name}
+		link=f"/receipt/{doc.doctype}/{doc.name}", cooperative=tx.cooperative, kind="payment")
+	return {"ok": True, "contribution": doc.name, "document_type": doc.doctype}
 
 
 @frappe.whitelist()

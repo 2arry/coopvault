@@ -1,0 +1,64 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-21 18:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "resolution",
+  "outcome",
+  "votes_for",
+  "votes_against",
+  "abstained"
+ ],
+ "fields": [
+  {
+   "fieldname": "resolution",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Resolution",
+   "reqd": 1
+  },
+  {
+   "default": "Passed",
+   "fieldname": "outcome",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Outcome",
+   "options": "Passed\nNot passed\nDeferred"
+  },
+  {
+   "fieldname": "votes_for",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Votes For"
+  },
+  {
+   "fieldname": "votes_against",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Votes Against"
+  },
+  {
+   "fieldname": "abstained",
+   "fieldtype": "Int",
+   "label": "Abstained"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-21 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CoopVault",
+ "name": "Coop Meeting Resolution",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

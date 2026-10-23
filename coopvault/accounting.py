@@ -76,10 +76,12 @@ def account(cooperative, kind):
 	key = (cooperative, kind)
 	if key not in cache:
 		filters = {"cooperative": cooperative, "account_type": kind, "is_system": 1}
-		name = frappe.db.get_value("Coop Account", filters)
+		# Voluntary savings products have their own Member Savings accounts (2110 on); the chart's
+		# own account has the lowest code
+		name = frappe.db.get_value("Coop Account", filters, order_by="account_code asc")
 		if not name:
 			ensure_chart(cooperative)
-			name = frappe.db.get_value("Coop Account", filters)
+			name = frappe.db.get_value("Coop Account", filters, order_by="account_code asc")
 		cache[key] = name
 	return cache[key]
 
@@ -230,10 +232,20 @@ def _date_clause(values, upto=None, after=None):
 
 
 def member_savings(member, upto=None):
-	"""What the cooperative owes a member: their Members' savings sub-ledger."""
+	"""What the cooperative owes a member: their sub-ledger on every savings account."""
 	values = {"member": member}
 	debit, credit = _totals("member = %(member)s and account_type = 'Member Savings'" + _date_clause(values, upto), values)
 	return flt(credit - debit, 2)
+
+
+def member_savings_by_account(member):
+	"""A member's savings on each savings account (one per savings product)."""
+	rows = frappe.db.sql(
+		"""select account, coalesce(sum(credit - debit), 0) from `tabCoop Journal Line`
+		where is_posted = 1 and member = %s and account_type = 'Member Savings' group by account""",
+		member,
+	)
+	return {account: flt(amount, 2) for account, amount in rows}
 
 
 def cash_balance(cooperative, upto=None):

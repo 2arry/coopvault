@@ -10,6 +10,8 @@
  "field_order": [
   "reference",
   "purpose",
+  "savings_product",
+  "allocations",
   "status",
   "source",
   "settles_to",
@@ -50,12 +52,27 @@
    "unique": 1
   },
   {
+   "description": "Split: one payment shared across dues, loans and savings (see Allocations)",
    "fieldname": "purpose",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Purpose",
-   "options": "Contribution\nLoan Repayment",
+   "options": "Contribution\nLoan Repayment\nSplit",
    "reqd": 1
+  },
+  {
+   "fieldname": "savings_product",
+   "fieldtype": "Link",
+   "label": "Saved Into",
+   "options": "Coop Savings Product"
+  },
+  {
+   "description": "How a split payment is shared out: [{kind: dues|savings|loan, amount, loan, savings_product}]",
+   "fieldname": "allocations",
+   "fieldtype": "Code",
+   "label": "Allocations",
+   "options": "JSON",
+   "read_only": 1
   },
   {
    "default": "Initiated",
@@ -250,7 +267,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 08:01:37.185658",
+ "modified": "2026-10-23 08:17:35.856984",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Payment Transaction",

@@ -1,7 +1,8 @@
 """Check the books against the records they came from. Run with:
 
 	bench --site <site> execute coopvault.dev_check_books.run   (no: this file isn't in the package)
-	bench --site <site> console < dev/tests/check_books.py
+	echo 'exec(open("dev/tests/check_books.py").read())' | bench --site <site> console
+	(not `console < check_books.py`: IPython runs that line by line and a reported problem crashes)
 
 Prints problems and a one-line verdict; read-only.
 """
@@ -58,13 +59,18 @@ for coop in frappe.get_all("Cooperative", pluck="name"):
 	ins += flt(frappe.db.sql("select coalesce(sum(amount),0) from `tabCoop Loan Repayment` where cooperative=%s and status='Confirmed'", coop)[0][0])
 	outs = flt(frappe.db.sql("select coalesce(sum(principal - processing_fee),0) from `tabCoop Loan` where cooperative=%s and status in ('Sent','Active','Repaid')", coop)[0][0])
 	outs += flt(frappe.db.sql("select coalesce(sum(amount),0) from `tabCoop Withdrawal` where cooperative=%s and status in ('Sent','Completed')", coop)[0][0])
-	charges = type_balance(coop, ["Payment Charges"])
+	# Paystack's fees as booked (a share-out closes the expense account to zero, so read the entries
+	# that charged them rather than the account's balance)
+	charges = flt(frappe.db.sql("""select coalesce(sum(l.debit - l.credit),0) from `tabCoop Journal Line` l
+		join `tabCoop Journal Entry` j on j.name=l.parent where l.cooperative=%s and l.account_type='Payment Charges'
+		and j.voucher_type not in ('Share-out', 'Year End Closing') and l.is_posted=1""", coop)[0][0])
 	unallocated = -type_balance(coop, ["Unallocated Receipts"])
 	refunds = flt(frappe.db.sql("""select coalesce(sum(l.debit),0) from `tabCoop Journal Line` l join `tabCoop Journal Entry` j
 		on j.name=l.parent where l.cooperative=%s and j.voucher_type='Refund' and l.account_type='Member Savings' and l.is_posted=1""", coop)[0][0])
 	manual = flt(frappe.db.sql("""select coalesce(sum(l.debit - l.credit),0) from `tabCoop Journal Line` l join `tabCoop Journal Entry` j
-		on j.name=l.parent where l.cooperative=%s and j.voucher_type in ('Manual Journal') and l.account_type in ('Bank','Cash','Paystack Clearing')
-		and l.is_posted=1""", coop)[0][0])
+		on j.name=l.parent where l.cooperative=%s and l.account_type in ('Bank','Cash','Paystack Clearing') and l.is_posted=1
+		and (j.voucher_type = 'Manual Journal' or (j.voucher_type = 'Reversal' and j.reference_doctype is null))""",
+		coop)[0][0])
 	expected = flt(ins - outs - charges + unallocated - refunds + manual, 2)
 	actual = cash_balance(coop)
 	# Charges booked in the books include refund extras; both sides use the same figures

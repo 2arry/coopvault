@@ -9,6 +9,7 @@ import frappe
 from frappe import _
 from frappe.utils import flt, getdate, today
 
+from coopvault import savings
 from coopvault.accounting import active_entry, loan_position, make_entry, reverse_for
 
 TX = "Coop Payment Transaction"
@@ -46,13 +47,17 @@ def _when(value):
 def contribution(doc):
 	ref = ("Coop Contribution", doc.name)
 	if doc.status == "Confirmed" and not active_entry(*ref, "Contribution"):
-		kind = _("Opening balance") if doc.payment_method == "Opening Balance" else _("Savings")
+		product = savings.get(doc.cooperative, doc.get("savings_product"))
+		if doc.payment_method == "Opening Balance":
+			kind = _("Opening balance")
+		else:
+			kind = _("Savings") if product.kind == savings.REGULAR else product.product_name
 		make_entry(
 			doc.cooperative,
 			"Contribution",
 			[
 				{"type": receipt_account(doc), "debit": doc.amount, "member": doc.member},
-				{"type": "Member Savings", "credit": doc.amount, "member": doc.member},
+				{"account": product.account, "credit": doc.amount, "member": doc.member},
 			],
 			posting_date=_when(doc.contribution_date),
 			reference=ref,
@@ -144,7 +149,7 @@ def withdrawal(doc):
 			doc.cooperative,
 			"Withdrawal",
 			[
-				{"type": "Member Savings", "debit": doc.amount, "member": doc.member},
+				*({"account": acc, "debit": amount, "member": doc.member} for acc, amount in savings.withdrawal_lines(doc)),
 				{"type": "Bank", "credit": doc.amount, "member": doc.member},
 			],
 			posting_date=_when(doc.sent_on),
@@ -218,7 +223,8 @@ def refund(tx, refunded, full):
 		remarks = _("Refund of {0}: amount returned beyond the payment itself").format(tx.name)
 	else:
 		lines = [
-			{"type": "Member Savings", "debit": refunded, "member": tx.member},
+			{"account": savings.account_for(tx.cooperative, tx.get("savings_product")), "debit": refunded,
+				"member": tx.member},
 			{"type": _cash_type(tx), "credit": refunded, "member": tx.member},
 		]
 		remarks = _("Part refund of {0}").format(tx.name)

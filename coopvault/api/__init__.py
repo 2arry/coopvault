@@ -10,6 +10,7 @@ Roles inside a cooperative (one per member):
 - Accountant: the books (journals, closing, share-out), records offline payments.
 - Treasurer: moves money (sends approved loans and withdrawals), records offline payments.
 - Loan Officer: reviews loan applications and follows up arrears.
+- Secretary: calls meetings, takes attendance and keeps the minutes; keeps the member register.
 - Member: their own savings, loans and withdrawals.
 Approvals follow each cooperative's rules (see coopvault/approvals.py). Nobody approves their own
 request, anything that benefits them, or two stages of the same request.
@@ -18,7 +19,7 @@ request, anything that benefits them, or two stages of the same request.
 import frappe
 from frappe import _, _lt
 
-ROLES = ("Member", "Treasurer", "Accountant", "Loan Officer", "Chairman", "Admin")
+ROLES = ("Member", "Treasurer", "Accountant", "Loan Officer", "Secretary", "Chairman", "Admin")
 STAFF_ROLES = ROLES[1:]
 SUPER_ROLES = ("System Manager", "Coop Manager")
 
@@ -26,7 +27,7 @@ SUPER_ROLES = ("System Manager", "Coop Manager")
 CAPABILITIES = {
 	"settings": ("Admin",),
 	"reset": ("Admin",),
-	"members": ("Admin", "Chairman", "Treasurer", "Accountant", "Loan Officer"),
+	"members": ("Admin", "Chairman", "Treasurer", "Accountant", "Loan Officer", "Secretary"),
 	"suspend": ("Admin", "Chairman"),
 	"pay_out": ("Admin", "Treasurer"),
 	"record": ("Admin", "Treasurer", "Accountant"),
@@ -34,7 +35,8 @@ CAPABILITIES = {
 	"journal": ("Admin", "Accountant", "Treasurer"),
 	"close": ("Admin", "Accountant"),
 	"loans": ("Admin", "Chairman", "Treasurer", "Loan Officer"),
-	"announce": ("Admin", "Chairman", "Treasurer"),
+	"announce": ("Admin", "Chairman", "Treasurer", "Secretary"),
+	"meetings": ("Admin", "Chairman", "Secretary"),
 	"opening": ("Admin", "Treasurer", "Accountant"),
 }
 DENIED = {
@@ -47,7 +49,8 @@ DENIED = {
 	"journal": _lt("Only the accountant, treasurer or an admin prepares journal entries"),
 	"close": _lt("Only the accountant or an admin can close the books or prepare a share-out"),
 	"loans": _lt("Only the loan officer, treasurer, chairman or an admin can do this"),
-	"announce": _lt("Only the chairman, treasurer or an admin can post announcements"),
+	"announce": _lt("Only the chairman, secretary, treasurer or an admin can post announcements"),
+	"meetings": _lt("Only the secretary, chairman or an admin can arrange meetings and keep the minutes"),
 	"opening": _lt("Only the treasurer, accountant or an admin can propose opening balances"),
 	"members": _lt("Only the cooperative's officers can do this"),
 }

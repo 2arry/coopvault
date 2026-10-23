@@ -15,6 +15,7 @@
   "user",
   "cb1",
   "amount",
+  "savings_product",
   "contribution_date",
   "status",
   "payment_section",
@@ -80,6 +81,14 @@
    "label": "Amount",
    "non_negative": 1,
    "reqd": 1
+  },
+  {
+   "description": "Empty means the regular contributions",
+   "fieldname": "savings_product",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Saved Into",
+   "options": "Coop Savings Product"
   },
   {
    "default": "Today",
@@ -161,7 +170,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 08:24:02.959119",
+ "modified": "2026-10-23 08:17:35.854388",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Contribution",

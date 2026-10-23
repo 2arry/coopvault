@@ -389,7 +389,7 @@ def eligibility(member, product, amount=None, months=None):
 		"payout_account_number", "security_hold_until"], as_dict=True)
 	b = member_balances(member)
 	pool = cooperative_totals(m.cooperative).pool_balance
-	limit = max(0.0, (b.savings - b.withdrawal_requested - b.pledged) * flt(p.savings_multiplier) - b.exposure)
+	limit = max(0.0, (b.lendable - b.pledged) * flt(p.savings_multiplier) - b.exposure)
 	if flt(p.max_amount):
 		limit = min(limit, flt(p.max_amount))
 	checks = []

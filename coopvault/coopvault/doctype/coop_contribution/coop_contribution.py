@@ -6,7 +6,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt, now_datetime
 
-from coopvault import postings
+from coopvault import postings, savings
 from coopvault.ledger import refresh_all
 
 
@@ -20,6 +20,10 @@ class CoopContribution(Document):
 		if self.is_new() and member.status != "Active" and not self.flags.money_received:
 			# Money that already reached the cooperative (through Paystack) is always recorded
 			frappe.throw(_("Only active members can make contributions"))
+		product = savings.get(self.cooperative, self.savings_product)
+		self.savings_product = product.name
+		if self.is_new() and not product.enabled and not self.flags.money_received:
+			frappe.throw(_("{0} isn't open for saving").format(product.product_name))
 		if self.has_value_changed("status") and self.status in ("Confirmed", "Rejected", "Reversed"):
 			self.reviewed_by = self.reviewed_by or frappe.session.user
 			self.reviewed_on = now_datetime()

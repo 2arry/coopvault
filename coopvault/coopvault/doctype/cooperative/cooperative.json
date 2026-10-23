@@ -39,6 +39,8 @@
   "online_section",
   "accept_online_payments",
   "cb6",
+  "auto_allocate",
+  "extra_savings_product",
   "fee_bearer",
   "books_section",
   "fiscal_year_start",
@@ -247,6 +249,20 @@
    "fieldtype": "Column Break"
   },
   {
+   "default": "1",
+   "description": "A transfer to a member's account number pays dues first, then loan instalments due, then savings",
+   "fieldname": "auto_allocate",
+   "fieldtype": "Check",
+   "label": "Share Out Transfers Automatically"
+  },
+  {
+   "description": "What's left after dues and instalments. Empty: regular contributions (paying ahead)",
+   "fieldname": "extra_savings_product",
+   "fieldtype": "Link",
+   "label": "Extra Money Goes To",
+   "options": "Coop Savings Product"
+  },
+  {
    "default": "Member",
    "description": "Member: the fee is added at checkout so the full amount reaches the pool",
    "fieldname": "fee_bearer",
@@ -352,7 +368,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 07:58:09.321687",
+ "modified": "2026-10-23 08:23:05.869826",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Cooperative",

@@ -91,7 +91,7 @@ class CoopLoan(Document):
 			g.member_name, g.user, g.status = m.full_name, m.user, "Pending"
 			if flt(g.amount) <= 0:
 				frappe.throw(_("Say how much {0} is guaranteeing").format(m.full_name))
-			free = member_balances(g.member).withdrawable
+			free = member_balances(g.member).pledgeable
 			if flt(g.amount) > free + 0.005:
 				frappe.throw(_("{0} can guarantee at most {1} right now").format(m.full_name, money_text(free, coop.currency)))
 		if needed and sum(flt(g.amount) for g in self.guarantors) + 0.005 < flt(self.principal) * flt(product.guarantee_percent) / 100:
@@ -101,7 +101,7 @@ class CoopLoan(Document):
 	def check_borrow_limit(self, coop):
 		b = member_balances(self.member, exclude_loan=None if self.is_new() else self.name)
 		multiplier = flt(frappe.db.get_value("Coop Loan Product", self.product, "savings_multiplier")) if self.product else b.multiplier
-		b.borrow_limit = max(0.0, (b.savings - b.withdrawal_requested - b.pledged) * multiplier - b.exposure)
+		b.borrow_limit = max(0.0, (b.lendable - b.pledged) * multiplier - b.exposure)
 		if flt(self.principal) > b.borrow_limit + 0.005:
 			frappe.throw(
 				_(

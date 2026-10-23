@@ -292,7 +292,7 @@ def reset_password_with_code(login, code, new_password):
 	reset = frappe.db.get_value(
 		"Coop Password Reset",
 		{"user": user, "used_on": ["is", "not set"]},
-		["name", "code_hash", "expires_on", "attempts", "cooperative", "created_by"],
+		["name", "code_hash", "expires_on", "attempts", "cooperative", "created_by", "purpose"],
 		as_dict=True,
 		order_by="creation desc",
 	)
@@ -308,6 +308,18 @@ def reset_password_with_code(login, code, new_password):
 	update_password(user, new_password)
 	frappe.db.set_value("Coop Password Reset", reset.name, "used_on", now_datetime())
 	sessions.revoke_all(user)
+
+	if reset.purpose == "Setup":
+		# A first password for an account an officer created: nothing to protect yet, so no hold
+		if reset.cooperative:
+			notify(
+				staff_of(reset.cooperative, exclude_users=[user]),
+				_("{0} set up their account").format(u.full_name),
+				kind="membership",
+				cooperative=reset.cooperative,
+				push=False,
+			)
+		return _session_payload(user)
 
 	_until, hours = start_hold(user)
 	notify(

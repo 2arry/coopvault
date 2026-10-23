@@ -32,10 +32,12 @@ class Cooperative(Document):
 		from coopvault.approvals import ensure_default_rules
 
 		from coopvault.loans import ensure_default_product
+		from coopvault.savings import ensure_regular
 
 		ensure_chart(self.name)
 		ensure_default_rules(self.name)
 		ensure_default_product(self.name)
+		ensure_regular(self.name)
 
 	def validate(self):
 		if not 0 <= flt(self.loan_multiplier) <= 1:
@@ -45,6 +47,10 @@ class Cooperative(Document):
 		if (self.max_loan_tenure_months or 0) < 1:
 			self.max_loan_tenure_months = 1
 		self.currency = (self.currency or "NGN").upper()
+		if self.extra_savings_product and frappe.db.get_value(
+			"Coop Savings Product", self.extra_savings_product, "cooperative") != self.name:
+			frappe.throw(_("Choose one of this group's savings products"))
+		self.extra_savings_product = self.extra_savings_product or None
 		self.sync_plans()
 
 	def sync_plans(self):

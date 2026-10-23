@@ -16,6 +16,8 @@
   "reason",
   "cb1",
   "amount",
+  "savings_product",
+  "leaving",
   "status",
   "requested_on",
   "sent_on",
@@ -88,6 +90,19 @@
    "label": "Amount",
    "non_negative": 1,
    "reqd": 1
+  },
+  {
+   "description": "Empty means the regular contributions",
+   "fieldname": "savings_product",
+   "fieldtype": "Link",
+   "label": "Taken From",
+   "options": "Coop Savings Product"
+  },
+  {
+   "description": "Takes out everything, including savings that can only be withdrawn on leaving",
+   "fieldname": "leaving",
+   "fieldtype": "Check",
+   "label": "Leaving the Group"
   },
   {
    "default": "Pending",
@@ -176,7 +191,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 08:24:02.962508",
+ "modified": "2026-10-23 08:23:05.872391",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Withdrawal",
