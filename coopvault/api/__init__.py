@@ -14,6 +14,12 @@ Roles inside a cooperative (one per member):
 - Member: their own savings, loans and withdrawals.
 Approvals follow each cooperative's rules (see coopvault/approvals.py). Nobody approves their own
 request, anything that benefits them, or two stages of the same request.
+
+Platform operators (the "Platform Operator" role) run Cooperative360 itself from the console in
+api/platform.py: they approve new groups, manage plans and can suspend a group. They are not
+members of any group, so none of the endpoints here show them a group's money. A suspended (or
+declined) group is read-only: every state-changing request through get_membership is refused,
+except finishing a checkout already under way and confirming money that arrived.
 """
 
 import frappe
@@ -22,6 +28,8 @@ from frappe import _, _lt
 ROLES = ("Member", "Treasurer", "Accountant", "Loan Officer", "Secretary", "Chairman", "Admin")
 STAFF_ROLES = ROLES[1:]
 SUPER_ROLES = ("System Manager", "Coop Manager")
+PLATFORM_ROLE = "Platform Operator"
+PAUSED = ("Suspended", "Declined")
 
 # What each role can do (Admins can do everything)
 CAPABILITIES = {
@@ -77,7 +85,31 @@ def is_super_user(user=None):
 	return user == "Administrator" or bool(set(frappe.get_roles(user)) & set(SUPER_ROLES))
 
 
-def get_membership(cooperative, user=None, admin=False, owner=False, allow_inactive=False, capability=None):
+def is_platform_operator(user=None):
+	user = user or frappe.session.user
+	if user == "Guest":
+		return False
+	roles = frappe.get_roles(user)
+	return user == "Administrator" or PLATFORM_ROLE in roles or "System Manager" in roles
+
+
+def _check_open(cooperative):
+	"""Refuse changes in a group Cooperative360 has paused (reads are always allowed)."""
+	request = getattr(frappe.local, "request", None)
+	if not request or request.method != "POST":
+		return
+	coop = frappe.db.get_value("Cooperative", cooperative, ["cooperative_name", "status", "status_reason"], as_dict=True)
+	if coop.status in PAUSED:
+		what = _("is paused by Cooperative360") if coop.status == "Suspended" else _("wasn't approved by Cooperative360")
+		frappe.throw(
+			_("{0} {1}, so nothing can change for now.").format(coop.cooperative_name, what)
+			+ (" " + _("Reason: {0}").format(coop.status_reason) if coop.status_reason else ""),
+			frappe.PermissionError,
+		)
+
+
+def get_membership(cooperative, user=None, admin=False, owner=False, allow_inactive=False, capability=None,
+		allow_paused=False):
 	"""Return the current user's Coop Member row for a cooperative, enforcing access.
 
 	admin=True requires any officer role ("staff"); owner=True requires Admin; capability=... requires
@@ -94,6 +126,8 @@ def get_membership(cooperative, user=None, admin=False, owner=False, allow_inact
 		["name", "cooperative", "user", "full_name", "role", "status"],
 		as_dict=True,
 	)
+	if not allow_paused:
+		_check_open(cooperative)
 	if not member and is_super_user(user):
 		return frappe._dict(
 			name=None, cooperative=cooperative, user=user, role="Admin", status="Active", is_super=True,

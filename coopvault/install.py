@@ -2,7 +2,8 @@ import frappe
 
 from coopvault.notify import ensure_vapid_keys
 
-ROLES = ["Coop Manager"]
+# role, desk access. Platform operators use the console in the app, not the desk
+ROLES = [("Coop Manager", 1), ("Platform Operator", 0)]
 
 
 def before_install():
@@ -11,6 +12,7 @@ def before_install():
 
 def after_install():
 	make_roles()
+	ensure_default_plans()
 	setup_settings()
 	set_defaults()
 	ensure_vapid_keys()
@@ -19,17 +21,24 @@ def after_install():
 
 def after_migrate():
 	make_roles()
+	ensure_default_plans()
 	setup_settings()
 	ensure_vapid_keys()
 	allow_group_signups()
 
 
 def make_roles():
-	for role in ROLES:
+	for role, desk in ROLES:
 		if not frappe.db.exists("Role", role):
-			frappe.get_doc({"doctype": "Role", "role_name": role, "desk_access": 1}).insert(
+			frappe.get_doc({"doctype": "Role", "role_name": role, "desk_access": desk}).insert(
 				ignore_permissions=True
 			)
+
+
+def ensure_default_plans():
+	from coopvault.plans import ensure_default_plans as create
+
+	create()
 
 
 def setup_settings():
@@ -37,6 +46,10 @@ def setup_settings():
 	webhook = frappe.utils.get_url("/api/method/coopvault.api.payments.paystack_webhook")
 	if settings.webhook_url != webhook:
 		settings.db_set("webhook_url", webhook)
+	# Settings added after a site was set up start at their defaults (an unset field reads as off)
+	for field, value in (("require_group_approval", 1), ("subscription_grace_days", 7)):
+		if not frappe.db.exists("Singles", {"doctype": "CoopVault Settings", "field": field}):
+			settings.db_set(field, value)
 
 
 def set_defaults():

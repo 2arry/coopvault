@@ -16,7 +16,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, add_months, cint, flt, get_datetime, getdate, now_datetime, today
 
-from coopvault import paystack, postings, savings
+from coopvault import paystack, plans, postings, savings
 from coopvault.api import get_membership, require_login
 from coopvault.ledger import TRACKED, contribution_standing, plan_on, plans_for, refresh_all
 from coopvault.notify import notify, staff_of
@@ -36,7 +36,7 @@ def _coop(cooperative):
 		"Cooperative",
 		cooperative,
 		["name", "cooperative_name", "currency", "accept_online_payments", "fee_bearer", "paystack_subaccount_code",
-			"contribution_frequency", "auto_allocate"],
+			"contribution_frequency", "auto_allocate", "status"],
 		as_dict=True,
 	)
 
@@ -87,8 +87,12 @@ def config(cooperative=None):
 	if cooperative and frappe.session.user != "Guest":
 		get_membership(cooperative, allow_inactive=True)
 		coop = _coop(cooperative)
+		open_ = coop.status == "Active"
 		data.update(
-			online=bool(enabled and coop.accept_online_payments),
+			# The group's plan decides which payment features it has
+			online=bool(enabled and open_ and coop.accept_online_payments and plans.has(cooperative, "online_payments")),
+			autosave=bool(data["autosave"] and plans.has(cooperative, "autosave")),
+			dedicated_accounts=bool(data["dedicated_accounts"] and plans.has(cooperative, "dedicated_accounts")),
 			fee_bearer=coop.fee_bearer,
 			settles_to_cooperative=bool(coop.paystack_subaccount_code),
 		)
@@ -131,8 +135,11 @@ def initialize(cooperative, purpose, amount=None, loan=None, save_method=0, setu
 	if not me.name:
 		frappe.throw(_("Only members can pay"))
 	coop = _coop(cooperative)
+	if coop.status != "Active":
+		frappe.throw(_("{0} isn't open for payments yet").format(coop.cooperative_name))
 	if not coop.accept_online_payments:
 		frappe.throw(_("{0} is not accepting online payments").format(coop.cooperative_name))
+	plans.check_feature(cooperative, "online_payments")
 
 	if purpose == "Split":
 		if isinstance(allocations, str):
@@ -157,7 +164,8 @@ def initialize(cooperative, purpose, amount=None, loan=None, save_method=0, setu
 		frappe.throw(_("Invalid payment purpose"))
 
 	# Autosave pays the regular contribution only
-	setup_autosave = cint(setup_autosave) and purpose == "Contribution" and savings_product == savings.regular(cooperative)
+	setup_autosave = cint(setup_autosave) and purpose == "Contribution" and savings_product == savings.regular(cooperative) \
+		and plans.has(cooperative, "autosave")
 	save_method = cint(save_method) or setup_autosave
 	fee = _fee_for(coop, amount)
 	total = flt(amount + fee, 2)
@@ -252,7 +260,8 @@ def verify(reference):
 	)
 	if not tx:
 		frappe.throw(_("Payment not found"))
-	me = get_membership(tx.cooperative, allow_inactive=True)
+	# A checkout already under way finishes even if the group was paused meanwhile
+	me = get_membership(tx.cooperative, allow_inactive=True, allow_paused=True)
 	if tx.user != me.user and not me.is_admin:
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 
@@ -755,6 +764,7 @@ def setup_autosave(cooperative, amount, authorization, start_date=None):
 	if not paystack.is_enabled() or not paystack.settings().enable_autosave:
 		frappe.throw(_("Autosave is not available"))
 	me = get_membership(cooperative)
+	plans.check_feature(cooperative, "autosave")
 	amount = flt(amount, 2)
 	if amount < MIN_ONLINE_AMOUNT:
 		frappe.throw(_("Autosave amount is too small"))
@@ -769,7 +779,7 @@ def setup_autosave(cooperative, amount, authorization, start_date=None):
 
 @frappe.whitelist(methods=["POST"])
 def cancel_autosave(cooperative):
-	me = get_membership(cooperative, allow_inactive=True)
+	me = get_membership(cooperative, allow_inactive=True, allow_paused=True)
 	_disable_autosave(me.name)
 	return autosave_status(me.name)
 
@@ -861,7 +871,8 @@ def remind_autosave():
 	soon = add_days(today(), 2)
 	for m in frappe.get_all(
 		"Coop Member",
-		filters={"autosave_enabled": 1, "status": "Active", "autosave_next_date": soon},
+		filters={"autosave_enabled": 1, "status": "Active", "autosave_next_date": soon,
+			"cooperative": ["in", _autosave_groups()]},
 		fields=["name", "user", "cooperative", "autosave_amount", "autosave_reminded_for"],
 	):
 		if str(m.autosave_reminded_for or "") == str(soon):
@@ -875,13 +886,20 @@ def remind_autosave():
 	frappe.db.commit()
 
 
+def _autosave_groups():
+	"""Groups whose cards are charged: open, and on a plan with Autosave (a paused group charges nobody)."""
+	return [c for c in frappe.get_all("Cooperative", filters={"status": "Active"}, pluck="name")
+		if plans.has(c, "autosave")] or [""]
+
+
 def run_autosave():
 	"""Daily scheduler job."""
 	if not paystack.is_enabled() or not paystack.settings().enable_autosave:
 		return
 	due = frappe.get_all(
 		"Coop Member",
-		filters={"autosave_enabled": 1, "status": "Active", "autosave_next_date": ["<=", today()]},
+		filters={"autosave_enabled": 1, "status": "Active", "autosave_next_date": ["<=", today()],
+			"cooperative": ["in", _autosave_groups()]},
 		pluck="name",
 	)
 	for member in due:
@@ -915,6 +933,7 @@ def request_dedicated_account(cooperative, bvn=None):
 	if not (paystack.is_enabled() and paystack.settings().enable_dedicated_accounts):
 		frappe.throw(_("Dedicated accounts are not available"))
 	me = get_membership(cooperative)
+	plans.check_feature(cooperative, "dedicated_accounts")
 	if not frappe.db.get_value("User", me.user, "mobile_no"):
 		frappe.throw(_("Add your phone number in your profile first"))
 	m = frappe.db.get_value(
@@ -1149,6 +1168,10 @@ def paystack_webhook():
 			if verified and verified.get("status") == "success":
 				if frappe.db.exists("Coop Payment Transaction", data["reference"]):
 					_complete(data["reference"], verified)
+				elif frappe.db.exists("Coop Subscription Payment", data["reference"]):
+					from coopvault.api.subscription import complete as complete_subscription
+
+					complete_subscription(data["reference"], verified)
 				elif verified.get("channel") == "dedicated_nuban":
 					_record_dedicated_transfer(verified)
 		elif kind == "direct_debit.authorization.active":

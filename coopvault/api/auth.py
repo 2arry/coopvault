@@ -33,9 +33,10 @@ def get_profile(user_name=None):
 	u = frappe.db.get_value(
 		"User", user_name, ["name", "email", "full_name", "first_name", "mobile_no", "user_image"], as_dict=True
 	)
-	from coopvault.api import is_super_user
+	from coopvault.api import is_platform_operator, is_super_user
 
 	u.is_super_user = is_super_user(user_name)
+	u.is_platform = is_platform_operator(user_name)
 	u.payout_account = frappe.db.get_value(
 		"Coop Member",
 		{"user": user_name, "payout_account_number": ["is", "set"]},

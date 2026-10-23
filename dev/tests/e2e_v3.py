@@ -137,6 +137,9 @@ T, B, C, X = t["token"], b["token"], c["token"], x["token"]
 coop = call("coop.create_cooperative", A, cooperative_name=f"Unity {RUN}", contribution_amount=10000,
 	contribution_frequency="Monthly", interest_rate=5, max_loan_tenure_months=6, start_date="2026-08-01")
 CO = coop["name"]
+check("new groups wait for Cooperative360 to review them", coop["status"] == "Pending review")
+import harness  # noqa: E402  (a platform operator approves the group)
+harness.call("platform.review_group", harness.operator(), name=CO, approve=1)
 for tok in (T, B, C):
 	call("coop.join_cooperative", tok, join_code=coop["join_code"])
 staff_note = call("notifications.list_notifications", A, "GET")
@@ -160,6 +163,7 @@ check("approved member was notified", any("You're in" in i["title"] for i in cal
 
 # Statement leak: an admin of another cooperative can't read this cooperative's members
 xc = call("coop.create_cooperative", X, cooperative_name=f"Elsewhere {RUN}")
+harness.call("platform.review_group", harness.operator(), name=xc["name"], approve=1)
 rejected("other cooperative's admin can't read a member's statement", "coop.get_statement", X, "GET",
 	cooperative=xc["name"], member=MB)
 dash = call("coop.get_dashboard", B, "GET", cooperative=CO)

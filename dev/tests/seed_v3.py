@@ -70,6 +70,17 @@ def session(key, name, phone):
 	return call("auth.signup", full_name=name, email=f"{key}@example.com", password=PASSWORD, phone=phone)["token"]
 
 
+def operator_session():
+	"""Ola Operator (ops@example.com): the demo platform operator who approves the demo group."""
+	r = raw("auth.login", email="ops@example.com", password=PASSWORD)
+	if r.status_code == 200:
+		return r.json()["message"]["token"]
+	user = call("auth.signup", full_name="Ola Operator", email="ops@example.com", password=PASSWORD)["user"]["name"]
+	code = f"import frappe; frappe.get_doc('User', {user!r}).add_roles('Platform Operator'); frappe.db.commit()"
+	subprocess.run(["bench", "--site", SITE, "console"], input=code, cwd=BENCH, capture_output=True, text=True, check=True)
+	return call("auth.login", email="ops@example.com", password=PASSWORD)["token"]
+
+
 def fake_pay(token, coop, purpose, amount, loan=None):
 	init = call("payments.initialize", token, cooperative=coop, purpose=purpose, amount=amount, loan=loan)
 	requests.post("http://127.0.0.1:8899/_test/pay", json={"reference": init["reference"]}, timeout=30).raise_for_status()
@@ -85,6 +96,8 @@ if PART == "1":
 		fee_bearer="Member",
 		description="Monthly savings for traders at Ikeja market. We meet on the last Saturday of every month.")
 	CO = coop["name"]
+	if coop.get("status") == "Pending review":
+		call("platform.review_group", operator_session(), name=CO, approve=1, note="Demo group")
 	for key in ("tunde", "chioma", "ify", "musa", "ngozi", "bisi"):
 		call("coop.join_cooperative", tok[key], join_code=coop["join_code"])
 	members = {m["full_name"].split()[0].lower(): m["name"] for m in call("coop.list_members", A, method="GET", cooperative=CO)}

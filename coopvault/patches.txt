@@ -6,3 +6,4 @@ coopvault.patches.v3_0.books
 coopvault.patches.v3_0.approvals
 coopvault.patches.v3_0.loan_products
 coopvault.patches.v3_0.savings_products
+coopvault.patches.v3_0.platform_plans

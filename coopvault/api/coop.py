@@ -6,8 +6,19 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import add_days, add_to_date, cint, flt, getdate, now_datetime, today
 
-from coopvault import approvals, paystack, savings
-from coopvault.api import CAPABILITIES, ROLES, can, ensure_not_self, get_membership, is_super_user, require, require_login
+from coopvault import approvals, paystack, plans, savings
+from coopvault.api import (
+	CAPABILITIES,
+	PLATFORM_ROLE,
+	ROLES,
+	can,
+	ensure_not_self,
+	get_membership,
+	is_platform_operator,
+	is_super_user,
+	require,
+	require_login,
+)
 from coopvault.ledger import (
 	TRACKED,
 	contribution_standing,
@@ -46,9 +57,14 @@ COOP_PUBLIC_FIELDS = [
 	"fee_bearer",
 	"auto_allocate",
 	"extra_savings_product",
+	"status_reason",
+	"registration_number",
+	"location",
+	"expected_members",
 ]
 COOP_RULE_FIELDS = ["cooperative_name", "description", "loan_multiplier", "interest_rate", "max_loan_tenure_months",
 	"accept_online_payments", "fee_bearer", "auto_allocate", "extra_savings_product"]
+ONBOARDING_FIELDS = ["registration_number", "location", "expected_members"]
 RESET_CODE_MINUTES = 30
 SETUP_CODE_DAYS = 7
 PLACEHOLDER_EMAIL_DOMAIN = "members.invalid"  # reserved TLD: never delivers anywhere
@@ -114,11 +130,16 @@ def create_cooperative(cooperative_name, **kwargs):
 		frappe.throw(_("Creating cooperatives is restricted. Contact the platform admin."))
 
 	coop = frappe.new_doc("Cooperative")
-	coop.cooperative_name = cooperative_name
-	for field in COOP_RULE_FIELDS + ["contribution_amount", "contribution_frequency", "start_date"]:
+	coop.cooperative_name = (cooperative_name or "").strip()
+	if len(coop.cooperative_name) < 3:
+		frappe.throw(_("Enter the cooperative's name"))
+	for field in COOP_RULE_FIELDS + ["contribution_amount", "contribution_frequency", "start_date"] + ONBOARDING_FIELDS:
 		if field in kwargs and kwargs[field] not in (None, ""):
 			coop.set(field, kwargs[field])
 	coop.created_by_user = user
+	# New groups wait for Cooperative360 to check them before members can join or pay
+	review = cint(frappe.db.get_single_value("CoopVault Settings", "require_group_approval")) and not is_platform_operator(user)
+	coop.status = "Pending review" if review else "Active"
 	coop.insert(ignore_permissions=True)
 
 	profile = frappe.db.get_value("User", user, ["full_name", "mobile_no"], as_dict=True)
@@ -136,7 +157,25 @@ def create_cooperative(cooperative_name, **kwargs):
 			**_payout_defaults(user),
 		}
 	).insert(ignore_permissions=True)
-	return {"name": coop.name, "join_code": coop.join_code}
+	if review:
+		_platform_log(coop.name, "Submitted", _("Asked to join Cooperative360"))
+		founder = frappe.db.get_value("User", user, "full_name")
+		notify(platform_operators(), _("New cooperative to review: {0}").format(coop.cooperative_name),
+			_("Started by {0}{1}.").format(founder, _(" in {0}").format(coop.location) if coop.location else ""),
+			link=f"/platform/groups/{coop.name}", kind="platform")
+	else:
+		plans.start_trial(coop.name)
+	return {"name": coop.name, "join_code": coop.join_code, "status": coop.status}
+
+
+def platform_operators():
+	return [u for u in frappe.get_all("Has Role", filters={"role": PLATFORM_ROLE, "parenttype": "User"}, pluck="parent")
+		if frappe.db.get_value("User", u, "enabled")]
+
+
+def _platform_log(cooperative, action, note=None, **values):
+	frappe.get_doc({"doctype": "Coop Platform Action", "cooperative": cooperative, "action": action, "note": note,
+		"done_by": frappe.session.user, **values}).insert(ignore_permissions=True)
 
 
 @frappe.whitelist(allow_guest=True)
@@ -171,6 +210,8 @@ def join_cooperative(join_code):
 		"Coop Member", {"cooperative": coop.name, "user": user}, ["name", "status"], as_dict=True
 	)
 	full_name = frappe.db.get_value("User", user, "full_name")
+	if not existing or existing.status == "Left":
+		plans.check_members(coop.name)
 	if existing:
 		if existing.status == "Left":
 			frappe.db.set_value("Coop Member", existing.name, "status", "Pending")
@@ -207,6 +248,7 @@ def on_admission_decided(approval, approved, note=None):
 		return
 	coop_name = frappe.db.get_value("Cooperative", m.cooperative, "cooperative_name")
 	if approved:
+		plans.check_not_lapsed(m.cooperative, _("New members can be admitted once an admin renews it."))
 		m.status = "Active"
 		if not m.member_number:
 			m.member_number = next_member_number(m.cooperative)
@@ -327,6 +369,9 @@ def get_dashboard(cooperative):
 	if membership.is_admin:
 		data["period"] = period_summary(cooperative)
 		data["pending"] = pending_counts(cooperative, membership)
+		data["subscription"] = plans.state(cooperative)
+	if data["cooperative"].status != "Active":
+		data["support_contact"] = frappe.db.get_single_value("CoopVault Settings", "support_contact")
 	return data
 
 
@@ -359,9 +404,11 @@ def update_cooperative(cooperative, **kwargs):
 	start of the next period, so nobody is suddenly behind for months they already paid."""
 	get_membership(cooperative, owner=True)
 	coop = frappe.get_doc("Cooperative", cooperative)
-	for field in COOP_RULE_FIELDS:
+	for field in COOP_RULE_FIELDS + ONBOARDING_FIELDS:
 		if field in kwargs:
 			coop.set(field, kwargs[field])
+	if cint(coop.accept_online_payments) and coop.has_value_changed("accept_online_payments"):
+		plans.check_feature(cooperative, "online_payments")
 
 	change = None
 	amount = flt(kwargs.get("contribution_amount", coop.contribution_amount))
@@ -656,6 +703,8 @@ def add_member(cooperative, full_name, phone):
 	from coopvault.api.auth import _app_user
 
 	me = get_membership(cooperative, capability="members")
+	if frappe.db.get_value("Cooperative", cooperative, "status") != "Active":
+		frappe.throw(_("Members can be added once Cooperative360 has approved the group"))
 	full_name = " ".join((full_name or "").split())
 	if len(full_name) < 2:
 		frappe.throw(_("Enter the member's full name"))
@@ -670,6 +719,7 @@ def add_member(cooperative, full_name, phone):
 		frappe.throw(_("{0} is already in this group").format(phone))
 	if user and not _app_user(user):
 		frappe.throw(_("This phone number can't be used for a member"))
+	plans.check_members(cooperative)
 	if not user:
 		names = full_name.split(" ", 1)
 		u = frappe.get_doc(

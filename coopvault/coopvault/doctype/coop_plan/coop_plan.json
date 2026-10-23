@@ -1,0 +1,147 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:plan_name",
+ "creation": "2026-10-21 18:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "plan_name",
+  "enabled",
+  "is_default",
+  "description",
+  "price_monthly",
+  "trial_days",
+  "cb1",
+  "max_members",
+  "max_loan_products",
+  "max_savings_products",
+  "online_payments",
+  "dedicated_accounts",
+  "autosave"
+ ],
+ "fields": [
+  {
+   "bold": 1,
+   "fieldname": "plan_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "description": "New cooperatives start on this plan, with its trial",
+   "fieldname": "is_default",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Given to New Groups"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "price_monthly",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Price a Month (NGN)",
+   "non_negative": 1
+  },
+  {
+   "default": "30",
+   "fieldname": "trial_days",
+   "fieldtype": "Int",
+   "label": "Free Trial (Days)"
+  },
+  {
+   "fieldname": "cb1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "0 means no limit",
+   "fieldname": "max_members",
+   "fieldtype": "Int",
+   "label": "Most Members"
+  },
+  {
+   "description": "0 means no limit",
+   "fieldname": "max_loan_products",
+   "fieldtype": "Int",
+   "label": "Most Loan Products"
+  },
+  {
+   "description": "Including regular contributions. 0 means no limit",
+   "fieldname": "max_savings_products",
+   "fieldtype": "Int",
+   "label": "Most Savings Products"
+  },
+  {
+   "default": "1",
+   "fieldname": "online_payments",
+   "fieldtype": "Check",
+   "label": "Online Payments (Paystack)"
+  },
+  {
+   "fieldname": "dedicated_accounts",
+   "fieldtype": "Check",
+   "label": "Personal Account Numbers"
+  },
+  {
+   "fieldname": "autosave",
+   "fieldtype": "Check",
+   "label": "Autosave"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-21 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CoopVault",
+ "name": "Coop Plan",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Coop Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "plan_name",
+ "track_changes": 1
+}

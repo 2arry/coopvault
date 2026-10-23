@@ -51,6 +51,7 @@ scheduler_events = {
 		"coopvault.jobs.remind_due_contributions",
 		"coopvault.jobs.loans_daily",
 		"coopvault.jobs.daily_cleanup",
+		"coopvault.jobs.remind_subscriptions",
 	],
 	"hourly": [
 		"coopvault.api.meetings.remind_meetings",

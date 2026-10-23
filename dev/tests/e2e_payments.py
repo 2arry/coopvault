@@ -85,6 +85,8 @@ check("login by phone gives a new session", call("auth.login", email=phone(2), p
 coop = call("coop.create_cooperative", A, cooperative_name=f"Unity Savings {RUN}", interest_rate=10,
 	contribution_amount=10000, contribution_frequency="Monthly", fee_bearer="Member", start_date=date.today().replace(day=1).isoformat())
 CO = coop["name"]
+import harness  # noqa: E402  (a platform operator approves the group)
+harness.call("platform.review_group", harness.operator(), name=CO, approve=1)
 call("coop.set_bank_account", A, cooperative=CO, bank_code="058", account_number="1111111111", password=PWA, expect_error=True)
 coop_info = call("coop.set_bank_account", A, cooperative=CO, bank_code="058", account_number="0123456789", password=PWA)
 check("bank verified by name", coop_info["account_name"] == "UNITY SAVINGS CIRCLE" and coop_info["account_verified"] == 1,

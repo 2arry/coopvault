@@ -83,3 +83,23 @@ def loans_daily():
 			frappe.db.rollback()
 			frappe.log_error(title=f"Loan check failed for {l.name}", message=frappe.get_traceback())
 
+
+
+def remind_subscriptions():
+	"""Daily: tell a group's officers a week and a day before their trial or subscription ends,
+	and when it has run out (new loans and members pause; money already moving carries on)."""
+	from coopvault import plans
+	from coopvault.notify import staff_of
+
+	for coop in frappe.get_all("Cooperative", filters={"status": "Active"}, fields=["name", "cooperative_name"]):
+		st = plans.state(coop.name)
+		if st.state in ("trial", "active") and st.days_left in (7, 1):
+			what = _("free trial") if st.state == "trial" else _("subscription")
+			title = _("Your Cooperative360 {0} ends in {1} day(s)").format(what, st.days_left)
+			body = _("Renew in Manage → Settings → Plan so new loans and members don't pause.")
+		elif st.state == "lapsed" and st.ends_on and date_diff(today(), st.ends_on) == st.grace_days + 1:
+			title = _("Cooperative360 subscription ended")
+			body = _("New loans and new members are paused until it's renewed. Payments and withdrawals carry on.")
+		else:
+			continue
+		notify(staff_of(coop.name), title, body, link="/admin/plan", cooperative=coop.name, kind="subscription")

@@ -10,6 +10,9 @@
   "frontend_url",
   "allow_signup",
   "allow_create_cooperative",
+  "require_group_approval",
+  "subscription_grace_days",
+  "support_contact",
   "security_section",
   "session_idle_days",
   "session_max_days",
@@ -58,6 +61,25 @@
    "fieldname": "allow_create_cooperative",
    "fieldtype": "Check",
    "label": "Allow Members to Create Cooperatives"
+  },
+  {
+   "default": "1",
+   "description": "New groups wait for a platform operator to approve them before members can join",
+   "fieldname": "require_group_approval",
+   "fieldtype": "Check",
+   "label": "Review New Cooperatives"
+  },
+  {
+   "default": "7",
+   "fieldname": "subscription_grace_days",
+   "fieldtype": "Int",
+   "label": "Days of Grace After a Subscription Ends"
+  },
+  {
+   "description": "Shown to groups that are under review or paused, e.g. a WhatsApp number",
+   "fieldname": "support_contact",
+   "fieldtype": "Data",
+   "label": "Support Contact"
   },
   {
    "fieldname": "security_section",
@@ -231,7 +253,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-21 18:00:00.000000",
+ "modified": "2026-10-23 12:35:16.077850",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "CoopVault Settings",

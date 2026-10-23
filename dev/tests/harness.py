@@ -108,11 +108,28 @@ def pay(token, cooperative, amount, purpose="Contribution", loan=None, **extra):
 	return call("payments.verify", token, reference=init["reference"])
 
 
+_operator = {}
+
+
+def operator():
+	"""A platform operator for this run (approves the test groups)."""
+	if "token" not in _operator:
+		u = call("auth.signup", full_name="Ola Operator", email=f"ops.{RUN}@example.com", password=PW, phone=None)
+		console(f"""
+user = frappe.get_doc('User', '{u["user"]["name"]}')
+user.add_roles('Platform Operator')
+""")
+		_operator["token"] = call("auth.login", email=f"ops.{RUN}@example.com", password=PW)["token"]
+	return _operator["token"]
+
+
 def new_cooperative(admin_token, name, members=(), **rules):
 	"""A cooperative with active members: members = [(token, role), ...]. Returns (coop, {token: member})."""
 	settings = {"contribution_amount": 10000, "contribution_frequency": "Monthly", "interest_rate": 5,
 		"max_loan_tenure_months": 6, "fee_bearer": "Member", **rules}
 	coop = call("coop.create_cooperative", admin_token, cooperative_name=f"{name} {RUN}", **settings)
+	if coop.get("status") == "Pending review":
+		call("platform.review_group", operator(), name=coop["name"], approve=1)
 	ids = {}
 	for token, _role in members:
 		call("coop.join_cooperative", token, join_code=coop["join_code"])

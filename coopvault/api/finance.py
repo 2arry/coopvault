@@ -13,7 +13,7 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import cint, flt, getdate, now_datetime, today
 
-from coopvault import approvals, loans, savings
+from coopvault import approvals, loans, plans, savings
 from coopvault.api import can, ensure_not_self, get_membership, require
 from coopvault.ledger import cooperative_totals, loan_schedule, member_balances
 from coopvault.notify import holders, notify, staff_of
@@ -189,6 +189,7 @@ def apply_loan(cooperative, amount, tenure_months=1, purpose=None, product=None,
 	if not me.name:
 		frappe.throw(_("Only members can borrow"))
 	check_hold(me.name)
+	plans.check_not_lapsed(cooperative, _("New loans can be requested once an admin renews it."))
 	if not frappe.db.get_value("Coop Member", me.name, "payout_account_number"):
 		frappe.throw(_("Add the bank account your loan should go to first (Me → Where to send my money)"))
 	doc = frappe.get_doc(
@@ -359,7 +360,8 @@ def _confirm_received(doc, label, link):
 @frappe.whitelist(methods=["POST"])
 def confirm_loan_received(name):
 	loan = frappe.get_doc("Coop Loan", name)
-	me = get_membership(loan.cooperative, allow_inactive=True)
+	# Saying money arrived records what already happened, so it works in a paused group too
+	me = get_membership(loan.cooperative, allow_inactive=True, allow_paused=True)
 	if loan.member != me.name or loan.status != "Sent":
 		frappe.throw(_("Nothing to confirm here"), frappe.PermissionError)
 	loan.status = "Active"
@@ -625,10 +627,18 @@ def save_loan_product(cooperative, product_name, name=None, **values):
 		if field in values and field not in ("name", "product_name"):
 			doc.set(field, values[field])
 	loans.validate_product(doc)
+	_check_plan_allows(doc)
 	doc.save(ignore_permissions=True)
 	if not frappe.db.exists("Coop Loan Product", {"cooperative": cooperative, "enabled": 1}):
 		frappe.throw(_("Keep at least one loan product switched on"))
 	return _products(cooperative, enabled_only=False)
+
+
+def _check_plan_allows(doc):
+	"""A product being switched on (or created) must fit the group's plan."""
+	was_on = not doc.is_new() and cint(frappe.db.get_value(doc.doctype, doc.name, "enabled"))
+	if cint(doc.enabled) and not was_on:
+		plans.check_products(doc.cooperative, doc.doctype)
 
 
 # Savings products ------------------------------------------------------------------------------
@@ -683,6 +693,7 @@ def save_savings_product(cooperative, product_name, name=None, **values):
 	for field in SAVINGS_FIELDS:
 		if field in values and field != "product_name":
 			doc.set(field, values[field])
+	_check_plan_allows(doc)
 	doc.save(ignore_permissions=True)
 	return admin_savings_products(cooperative)
 
@@ -889,7 +900,7 @@ def on_withdrawal_decided(approval, approved, note=None):
 @frappe.whitelist(methods=["POST"])
 def confirm_withdrawal_received(name):
 	doc = frappe.get_doc("Coop Withdrawal", name)
-	me = get_membership(doc.cooperative, allow_inactive=True)
+	me = get_membership(doc.cooperative, allow_inactive=True, allow_paused=True)
 	if doc.member != me.name or doc.status != "Sent":
 		frappe.throw(_("Nothing to confirm here"), frappe.PermissionError)
 	doc.status = "Completed"

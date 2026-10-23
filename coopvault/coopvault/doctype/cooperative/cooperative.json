@@ -42,6 +42,18 @@
   "auto_allocate",
   "extra_savings_product",
   "fee_bearer",
+  "platform_section",
+  "registration_number",
+  "location",
+  "expected_members",
+  "plan",
+  "trial_ends_on",
+  "paid_until",
+  "cb_platform",
+  "status_reason",
+  "status_changed_on",
+  "status_changed_by",
+  "approved_on",
   "books_section",
   "fiscal_year_start",
   "reserve_percent",
@@ -69,12 +81,13 @@
   },
   {
    "default": "Active",
+   "description": "Set by Cooperative360: new groups wait for review; suspended groups are read-only",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Active\nInactive"
+   "options": "Pending review\nActive\nSuspended\nDeclined\nInactive"
   },
   {
    "fieldname": "description",
@@ -271,6 +284,77 @@
    "options": "Member\nCooperative"
   },
   {
+   "collapsible": 1,
+   "fieldname": "platform_section",
+   "fieldtype": "Section Break",
+   "label": "Cooperative360 platform"
+  },
+  {
+   "description": "From the state's Director of Cooperatives, if registered (text only)",
+   "fieldname": "registration_number",
+   "fieldtype": "Data",
+   "label": "Registration Number"
+  },
+  {
+   "fieldname": "location",
+   "fieldtype": "Data",
+   "label": "Town and State"
+  },
+  {
+   "fieldname": "expected_members",
+   "fieldtype": "Int",
+   "label": "Members Expected"
+  },
+  {
+   "fieldname": "plan",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Plan",
+   "options": "Coop Plan"
+  },
+  {
+   "fieldname": "trial_ends_on",
+   "fieldtype": "Date",
+   "label": "Trial Ends On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "paid_until",
+   "fieldtype": "Date",
+   "label": "Paid Until",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_platform",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Why the group was declined or suspended (members of the group see this)",
+   "fieldname": "status_reason",
+   "fieldtype": "Small Text",
+   "label": "Reason Given",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_changed_on",
+   "fieldtype": "Datetime",
+   "label": "Status Changed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_changed_by",
+   "fieldtype": "Link",
+   "label": "Status Changed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_on",
+   "fieldtype": "Datetime",
+   "label": "Approved On",
+   "read_only": 1
+  },
+  {
    "fieldname": "books_section",
    "fieldtype": "Section Break",
    "label": "Books"
@@ -368,7 +452,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-23 08:23:05.869826",
+ "modified": "2026-10-23 12:35:16.066817",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Cooperative",
