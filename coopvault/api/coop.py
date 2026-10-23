@@ -895,9 +895,13 @@ def get_statement(cooperative, member=None, limit=None):
 		"Coop Member",
 		member,
 		["name", "full_name", "phone", "role", "status", "joined_on", "payout_bank_name", "payout_account_number",
-			"payout_account_name", "payout_changed_on", "security_hold_until", "phone_changed_on", "member_number"],
+			"payout_account_name", "payout_changed_on", "security_hold_until", "phone_changed_on", "member_number", "user",
+			"added_by"],
 		as_dict=True,
 	)
+	# Added by an officer and not signed in yet: officers can send a new setup code
+	member_doc.setup_pending = bool(member_doc.added_by) and not _has_password(member_doc.pop("user"))
+	member_doc.pop("added_by")
 	balances = member_balances(member)
 	return {
 		"member": member_doc,
