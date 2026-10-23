@@ -29,7 +29,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Action",
-   "options": "Member admission\nLoan\nWithdrawal\nOffline payment\nManual journal\nShare-out",
+   "options": "Member admission\nLoan\nWithdrawal\nOffline payment\nManual journal\nShare-out\nLoan restructure",
    "reqd": 1
   },
   {
@@ -56,7 +56,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 18:00:00.000000",
+ "modified": "2026-10-23 07:17:47.080059",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Approval Rule",

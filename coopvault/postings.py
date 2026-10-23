@@ -69,12 +69,15 @@ def contribution(doc):
 def loan(doc):
 	ref = ("Coop Loan", doc.name)
 	if doc.status in ("Sent", "Active", "Repaid") and not active_entry(*ref, "Loan Disbursement"):
+		# The borrower owes the full amount; a processing fee is kept back from what's sent
+		fee = flt(doc.get("processing_fee"))
 		make_entry(
 			doc.cooperative,
 			"Loan Disbursement",
 			[
 				{"type": "Loan Receivable", "debit": doc.principal, "member": doc.member, "loan": doc.name},
-				{"type": "Bank", "credit": doc.principal, "member": doc.member, "loan": doc.name},
+				{"type": "Bank", "credit": flt(flt(doc.principal) - fee, 2), "member": doc.member, "loan": doc.name},
+				{"type": "Fee Income", "credit": fee, "member": doc.member, "loan": doc.name, "remarks": _("Processing fee")},
 			],
 			posting_date=_when(doc.disbursed_on),
 			reference=ref,
@@ -107,7 +110,12 @@ def split_repayment(loan_name, amount):
 def repayment(doc):
 	ref = ("Coop Loan Repayment", doc.name)
 	if doc.status == "Confirmed" and not active_entry(*ref, "Loan Repayment"):
-		part = split_repayment(doc.loan, doc.amount)
+		if flt(doc.get("principal_part")) or flt(doc.get("interest_part")) or flt(doc.get("penalty_part")):
+			part = frappe._dict(principal=flt(doc.principal_part), interest=flt(doc.interest_part),
+				penalty=flt(doc.penalty_part))
+		else:
+			part = split_repayment(doc.loan, doc.amount)
+			part.penalty = 0.0
 		make_entry(
 			doc.cooperative,
 			"Loan Repayment",
@@ -115,6 +123,7 @@ def repayment(doc):
 				{"type": receipt_account(doc), "debit": doc.amount, "member": doc.member, "loan": doc.loan},
 				{"type": "Loan Receivable", "credit": part.principal, "member": doc.member, "loan": doc.loan},
 				{"type": "Interest Income", "credit": part.interest, "member": doc.member, "loan": doc.loan},
+				{"type": "Penalty Income", "credit": part.penalty, "member": doc.member, "loan": doc.loan},
 			],
 			posting_date=_when(doc.payment_date),
 			reference=ref,

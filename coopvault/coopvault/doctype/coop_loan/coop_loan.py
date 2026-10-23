@@ -4,9 +4,9 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import add_months, flt, getdate, now_datetime, today
+from frappe.utils import add_months, cint, flt, getdate, now_datetime, today
 
-from coopvault import postings
+from coopvault import loans, postings
 from coopvault.ledger import cooperative_totals, member_balances, refresh_all
 from coopvault.utils import money_text
 
@@ -37,12 +37,18 @@ class CoopLoan(Document):
 		if self.status == "Pending":
 			if member.status != "Active":
 				frappe.throw(_("Only active members can borrow"))
+			self.product = self.product or loans.ensure_default_product(self.cooperative)
+			product = frappe.get_cached_doc("Coop Loan Product", self.product)
+			if product.cooperative != self.cooperative or not product.enabled:
+				frappe.throw(_("Choose one of the group's loan products"))
 			self.tenure_months = max(1, self.tenure_months or 1)
-			if self.tenure_months > (coop.max_loan_tenure_months or 12):
-				frappe.throw(_("Maximum loan tenure is {0} months").format(coop.max_loan_tenure_months))
-			self.interest_rate = flt(coop.interest_rate)
-			self.interest_amount = flt(self.principal) * flt(self.interest_rate) / 100
-			self.total_payable = flt(self.principal) + flt(self.interest_amount)
+			if not cint(product.min_tenure_months) <= self.tenure_months <= cint(product.max_tenure_months):
+				frappe.throw(_("{0} is for {1} to {2} months").format(product.product_name, product.min_tenure_months,
+					product.max_tenure_months))
+			if self.is_new():
+				self.check_eligibility(product, coop)
+				self.check_guarantors(product, coop)
+			loans.apply_product(self)
 
 		if self.status in ("Pending", "Approved", "Sent") and previous in (None, "Pending", "Approved"):
 			self.check_borrow_limit(coop)
@@ -50,17 +56,52 @@ class CoopLoan(Document):
 			self.send(coop)
 		if self.status == "Active" and previous == "Sent":
 			self.received_on = self.received_on or today()
-			self.due_date = add_months(getdate(self.received_on), self.tenure_months or 1)
+			if self.product:
+				loans.start_schedule(self)
+			else:
+				self.due_date = add_months(getdate(self.received_on), self.tenure_months or 1)
 
 		self.amount_repaid = flt(self.amount_repaid)
-		self.balance = max(0.0, flt(self.total_payable) - self.amount_repaid)
+		self.balance = max(0.0, flt(self.total_payable) + flt(self.penalties_charged) - self.amount_repaid)
 
 		if self.has_value_changed("status") and self.status in ("Sent", "Rejected"):
 			self.reviewed_by = frappe.session.user
 			self.reviewed_on = now_datetime()
 
+	def check_eligibility(self, product, coop):
+		result = loans.eligibility(self.member, product.name, self.principal, self.tenure_months)
+		failed = [c["label"] for c in result.checks if not c["ok"] and c["key"] not in ("amount", "payout")]
+		if failed:
+			frappe.throw(_("Not eligible for {0} yet: {1}").format(product.product_name, "; ".join(failed)),
+				title=_("Not eligible"))
+
+	def check_guarantors(self, product, coop):
+		"""Guarantors are other active members who promise part of their own savings."""
+		needed = cint(product.guarantors_required)
+		if len(self.guarantors) < needed:
+			frappe.throw(_("{0} needs {1} guarantor(s)").format(product.product_name, needed))
+		seen = set()
+		for g in self.guarantors:
+			m = frappe.db.get_value("Coop Member", g.member, ["name", "cooperative", "status", "full_name", "user"], as_dict=True)
+			if not m or m.cooperative != self.cooperative or m.status != "Active":
+				frappe.throw(_("Guarantors must be active members of the group"))
+			if g.member == self.member or g.member in seen:
+				frappe.throw(_("Choose different people as guarantors (not yourself)"))
+			seen.add(g.member)
+			g.member_name, g.user, g.status = m.full_name, m.user, "Pending"
+			if flt(g.amount) <= 0:
+				frappe.throw(_("Say how much {0} is guaranteeing").format(m.full_name))
+			free = member_balances(g.member).withdrawable
+			if flt(g.amount) > free + 0.005:
+				frappe.throw(_("{0} can guarantee at most {1} right now").format(m.full_name, money_text(free, coop.currency)))
+		if needed and sum(flt(g.amount) for g in self.guarantors) + 0.005 < flt(self.principal) * flt(product.guarantee_percent) / 100:
+			frappe.throw(_("Guarantors need to cover at least {0} of the loan").format(
+				money_text(flt(self.principal) * flt(product.guarantee_percent) / 100, coop.currency)))
+
 	def check_borrow_limit(self, coop):
 		b = member_balances(self.member, exclude_loan=None if self.is_new() else self.name)
+		multiplier = flt(frappe.db.get_value("Coop Loan Product", self.product, "savings_multiplier")) if self.product else b.multiplier
+		b.borrow_limit = max(0.0, (b.savings - b.withdrawal_requested - b.pledged) * multiplier - b.exposure)
 		if flt(self.principal) > b.borrow_limit + 0.005:
 			frappe.throw(
 				_(
@@ -90,6 +131,11 @@ class CoopLoan(Document):
 			frappe.throw(_("This member hasn't added the bank account to send the loan to"))
 		self.update(payout)
 		self.disbursed_on = today()
+
+	@property
+	def amount_to_send(self):
+		"""What the borrower receives: the loan less any processing fee."""
+		return flt(flt(self.principal) - flt(self.processing_fee), 2)
 
 	def on_update(self):
 		postings.loan(self)

@@ -23,12 +23,33 @@
   "due_date",
   "amounts_section",
   "principal",
+  "product",
+  "interest_method",
   "interest_rate",
+  "rate_period",
   "interest_amount",
+  "processing_fee",
   "cb2",
   "total_payable",
   "amount_repaid",
+  "penalties_charged",
   "balance",
+  "penalty_percent",
+  "grace_days",
+  "schedule_section",
+  "instalments",
+  "principal_paid",
+  "interest_paid",
+  "cb5",
+  "penalties_paid",
+  "overdue_amount",
+  "days_overdue",
+  "guarantor_section",
+  "guarantors",
+  "restructure_section",
+  "restructure_months",
+  "restructure_reason",
+  "restructures",
   "transfer_section",
   "transfer_reference",
   "payout_bank_name",
@@ -148,15 +169,45 @@
    "reqd": 1
   },
   {
+   "fieldname": "product",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Loan Product",
+   "options": "Coop Loan Product"
+  },
+  {
+   "default": "Flat",
+   "fieldname": "interest_method",
+   "fieldtype": "Select",
+   "label": "Interest Method",
+   "options": "Flat\nReducing balance\nInterest free",
+   "read_only": 1
+  },
+  {
    "fieldname": "interest_rate",
    "fieldtype": "Percent",
-   "label": "Interest Rate (flat %)",
+   "label": "Interest Rate",
+   "read_only": 1
+  },
+  {
+   "default": "Whole loan",
+   "fieldname": "rate_period",
+   "fieldtype": "Select",
+   "label": "Rate Period",
+   "options": "Per month\nPer year\nWhole loan",
    "read_only": 1
   },
   {
    "fieldname": "interest_amount",
    "fieldtype": "Currency",
-   "label": "Interest Amount",
+   "label": "Total Interest",
+   "read_only": 1
+  },
+  {
+   "description": "Taken off the amount sent",
+   "fieldname": "processing_fee",
+   "fieldtype": "Currency",
+   "label": "Processing Fee",
    "read_only": 1
   },
   {
@@ -177,11 +228,114 @@
    "read_only": 1
   },
   {
+   "fieldname": "penalties_charged",
+   "fieldtype": "Currency",
+   "label": "Late Penalties Charged",
+   "read_only": 1
+  },
+  {
    "bold": 1,
+   "description": "Total payable plus penalties, less repayments",
    "fieldname": "balance",
    "fieldtype": "Currency",
    "in_list_view": 1,
    "label": "Balance to Pay Back",
+   "read_only": 1
+  },
+  {
+   "fieldname": "penalty_percent",
+   "fieldtype": "Percent",
+   "label": "Late Penalty (% of overdue instalment per month)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "grace_days",
+   "fieldtype": "Int",
+   "label": "Grace Days",
+   "read_only": 1
+  },
+  {
+   "fieldname": "schedule_section",
+   "fieldtype": "Section Break",
+   "label": "Repayment Schedule"
+  },
+  {
+   "fieldname": "instalments",
+   "fieldtype": "Table",
+   "label": "Instalments",
+   "options": "Coop Loan Instalment",
+   "read_only": 1
+  },
+  {
+   "fieldname": "principal_paid",
+   "fieldtype": "Currency",
+   "label": "Principal Paid",
+   "read_only": 1
+  },
+  {
+   "fieldname": "interest_paid",
+   "fieldtype": "Currency",
+   "label": "Interest Paid",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb5",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "penalties_paid",
+   "fieldtype": "Currency",
+   "label": "Penalties Paid",
+   "read_only": 1
+  },
+  {
+   "fieldname": "overdue_amount",
+   "fieldtype": "Currency",
+   "label": "Overdue Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "days_overdue",
+   "fieldtype": "Int",
+   "in_standard_filter": 1,
+   "label": "Days Overdue",
+   "read_only": 1
+  },
+  {
+   "fieldname": "guarantor_section",
+   "fieldtype": "Section Break",
+   "label": "Guarantors"
+  },
+  {
+   "fieldname": "guarantors",
+   "fieldtype": "Table",
+   "label": "Guarantors",
+   "options": "Coop Loan Guarantor"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "restructure_section",
+   "fieldtype": "Section Break",
+   "label": "Restructuring"
+  },
+  {
+   "description": "Waiting for approval; set when a restructure is proposed",
+   "fieldname": "restructure_months",
+   "fieldtype": "Int",
+   "label": "Proposed New Term (Months)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "restructure_reason",
+   "fieldtype": "Small Text",
+   "label": "Proposed Because",
+   "read_only": 1
+  },
+  {
+   "fieldname": "restructures",
+   "fieldtype": "Table",
+   "label": "Restructures",
+   "options": "Coop Loan Restructure",
    "read_only": 1
   },
   {
@@ -259,7 +413,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 08:24:02.960749",
+ "modified": "2026-10-23 07:17:47.063678",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Loan",

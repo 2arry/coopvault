@@ -16,7 +16,7 @@ import frappe
 from frappe import _
 from frappe.utils import flt, now_datetime
 
-ACTIONS = ("Member admission", "Loan", "Withdrawal", "Offline payment", "Manual journal", "Share-out")
+ACTIONS = ("Member admission", "Loan", "Withdrawal", "Offline payment", "Manual journal", "Share-out", "Loan restructure")
 
 # (applies from amount, [(stage label, roles)])
 DEFAULT_RULES = {
@@ -29,6 +29,7 @@ DEFAULT_RULES = {
 	"Offline payment": [(0, [("Check it arrived", "Treasurer, Accountant, Admin")])],
 	"Manual journal": [(0, [("Approve", "Accountant, Treasurer, Chairman, Admin")])],
 	"Share-out": [(0, [("Approve", "Admin, Chairman")])],
+	"Loan restructure": [(0, [("Approve", "Chairman, Admin")])],
 }
 
 HANDLERS = {
@@ -38,6 +39,12 @@ HANDLERS = {
 	"Offline payment": "coopvault.api.finance.on_offline_payment_decided",
 	"Manual journal": "coopvault.api.accounts.on_journal_decided",
 	"Share-out": "coopvault.api.accounts.on_share_out_decided",
+	"Loan restructure": "coopvault.api.finance.on_restructure_decided",
+}
+
+# Something that has to be true before anyone can approve (returns a reason, or None)
+PRECHECKS = {
+	"Loan": "coopvault.loans.guarantor_blocker",
 }
 
 
@@ -156,8 +163,9 @@ def approver_roles(doc, step=None):
 	return ["Admin"], "Admin" not in roles
 
 
-def why_not(doc, user=None):
-	"""Why this user can't decide the current stage, or None if they can."""
+def why_not(doc, user=None, approving=True):
+	"""Why this user can't decide the current stage, or None if they can. Declining skips the
+	checks that only matter for approving (e.g. guarantors still to accept)."""
 	user = user or frappe.session.user
 	if doc.status != "Pending":
 		return _("This has already been {0}").format(_(doc.status).lower())
@@ -175,12 +183,14 @@ def why_not(doc, user=None):
 	roles, _covering = approver_roles(doc, step)
 	if me.role not in roles:
 		return _("Waiting for: {0}").format(", ".join(roles))
+	if approving and doc.action in PRECHECKS:
+		return frappe.get_attr(PRECHECKS[doc.action])(doc.reference_name)
 	return None
 
 
 def decide(name, approve, note=None):
 	doc = frappe.get_doc("Coop Approval", name, for_update=True)
-	reason = why_not(doc)
+	reason = why_not(doc, approving=approve)
 	if reason:
 		frappe.throw(reason, frappe.PermissionError)
 	step = _current(doc)
@@ -251,6 +261,7 @@ def info(doc, user=None):
 		"requested_by_name": names.get(doc.requested_by),
 		"current_stage": doc.current_stage,
 		"can_decide": doc.status == "Pending" and not reason,
+		"can_reject": doc.status == "Pending" and not why_not(doc, user, approving=False),
 		"why_not": reason,
 		# Nobody can decide it at the moment (e.g. the only admin asked for it): the group needs another officer
 		"stuck": nobody,

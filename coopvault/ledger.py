@@ -8,7 +8,7 @@ and never drift.
 import frappe
 from frappe.utils import add_days, add_months, cint, flt, getdate, today
 
-from coopvault import accounting
+from coopvault import accounting, loans as loan_engine
 
 OPEN_LOAN_STATES = ("Pending", "Approved", "Sent", "Active")
 MONEY_OUT_LOAN_STATES = ("Sent", "Active", "Repaid")
@@ -27,8 +27,9 @@ def member_balances(member, exclude_loan=None, exclude_withdrawal=None):
 	"""Savings and borrowing position of a Coop Member.
 
 	savings      = confirmed contributions - withdrawals paid out
-	borrow_limit = (savings - pending withdrawals) x multiplier - (owed on loans + pending requests)
-	With the default multiplier of 1 nobody can owe more than they have saved.
+	borrow_limit = (savings - pending withdrawals - guarantees given) x multiplier - (owed on loans + pending requests)
+	With the default multiplier of 1 nobody can owe more than they have saved. Savings promised as a
+	guarantor for someone else's loan are held until that loan is repaid.
 	"""
 	cooperative = frappe.db.get_value("Coop Member", member, "cooperative")
 	multiplier = flt(frappe.db.get_value("Cooperative", cooperative, "loan_multiplier"))
@@ -51,6 +52,7 @@ def member_balances(member, exclude_loan=None, exclude_withdrawal=None):
 	# What the group owes the member, from the books: contributions, less withdrawals, plus any
 	# surplus shared out to them
 	savings = accounting.member_savings(member)
+	pledged = loan_engine.pledged_by(member, exclude_loan=exclude_loan)
 
 	return frappe._dict(
 		savings=savings,
@@ -62,9 +64,10 @@ def member_balances(member, exclude_loan=None, exclude_withdrawal=None):
 		pending_loans=pending,
 		exposure=exposure,
 		multiplier=multiplier,
-		borrow_limit=max(0.0, (savings - withdrawal_requested) * multiplier - exposure),
-		# Savings that aren't backing a loan or a pending request can be taken out
-		withdrawable=max(0.0, savings - withdrawal_requested - exposure),
+		pledged=pledged,
+		borrow_limit=max(0.0, (savings - withdrawal_requested - pledged) * multiplier - exposure),
+		# Savings that aren't backing a loan, a pending request or a guarantee can be taken out
+		withdrawable=max(0.0, savings - withdrawal_requested - exposure - pledged),
 	)
 
 
@@ -246,9 +249,30 @@ def contribution_standing(member, contributed=None):
 
 
 def loan_schedule(loan):
-	"""Equal monthly instalments from the day the borrower confirmed the money arrived."""
+	"""Where an active loan stands against its instalments (shape kept for the app)."""
 	if loan.get("status") != "Active":
 		return None
+	name = loan.get("name")
+	if name and frappe.db.exists("Coop Loan Instalment", {"parent": name}):
+		st = loan_engine.state(name)
+		rows = st.rows
+		return frappe._dict(
+			instalment=rows[0].amount if rows else 0.0,
+			instalments=len(rows),
+			paid_instalments=sum(1 for r in rows if r.paid),
+			next_due_date=st.next_due_date,
+			next_amount=st.next_amount,
+			overdue_amount=st.overdue_amount,
+			days_overdue=st.days_overdue,
+			is_overdue=st.overdue_amount > 0.005,
+			rows=rows,
+		)
+	return _legacy_schedule(loan)
+
+
+def _legacy_schedule(loan):
+	"""Equal monthly instalments from the day the borrower confirmed the money arrived (loans
+	without stored instalments)."""
 	start = loan.get("received_on") or loan.get("disbursed_on")
 	if not start:
 		return None
@@ -310,6 +334,9 @@ def refresh_loan(loan_name):
 	"""Recompute repaid amount and balance of a loan from its confirmed repayments."""
 	loan = frappe.db.get_value("Coop Loan", loan_name, ["name", "status", "total_payable"], as_dict=True)
 	if not loan:
+		return
+	if frappe.db.exists("Coop Loan Instalment", {"parent": loan_name}):
+		loan_engine.refresh(loan_name)
 		return
 	repaid = _sum("Coop Loan Repayment", "amount", {"loan": loan_name, "status": "Confirmed"})
 	values = {"amount_repaid": repaid, "balance": max(0.0, flt(loan.total_payable) - repaid)}

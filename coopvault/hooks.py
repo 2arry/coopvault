@@ -49,6 +49,7 @@ scheduler_events = {
 		"coopvault.api.finance.auto_confirm_transfers",
 		"coopvault.api.payments.remind_autosave",
 		"coopvault.jobs.remind_due_contributions",
+		"coopvault.jobs.loans_daily",
 		"coopvault.jobs.daily_cleanup",
 	],
 	"cron": {

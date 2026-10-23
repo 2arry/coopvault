@@ -1,0 +1,61 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-21 18:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "restructured_on",
+  "outstanding",
+  "new_months",
+  "reason",
+  "approved_by"
+ ],
+ "fields": [
+  {
+   "fieldname": "restructured_on",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Restructured On"
+  },
+  {
+   "fieldname": "outstanding",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Outstanding Then"
+  },
+  {
+   "fieldname": "new_months",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Spread Over (Months)"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "Approved By",
+   "options": "User"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-21 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CoopVault",
+ "name": "Coop Loan Restructure",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

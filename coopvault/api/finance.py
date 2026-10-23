@@ -6,12 +6,14 @@ treasurer from the cooperative's bank, recorded with the transfer reference, and
 the member who received it. Nobody can send money to themselves.
 """
 
+import json
+
 import frappe
 from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import cint, flt, getdate, now_datetime, today
 
-from coopvault import approvals
+from coopvault import approvals, loans
 from coopvault.api import can, ensure_not_self, get_membership, require
 from coopvault.ledger import cooperative_totals, loan_schedule, member_balances
 from coopvault.notify import holders, notify, staff_of
@@ -118,7 +120,42 @@ LOAN_FIELDS = [
 	"amount_repaid", "balance", "status", "purpose", "tenure_months", "application_date",
 	"disbursed_on", "received_on", "due_date", "review_note", "transfer_reference", "payout_bank_name",
 	"payout_account_number", "payout_account_name", "receipt_disputed", "dispute_note", "creation",
+	"product", "interest_method", "rate_period", "processing_fee", "penalties_charged", "overdue_amount", "days_overdue",
+	"restructure_months", "restructure_reason",
 ]
+PRODUCT_FIELDS = ["name", "product_name", "description", "interest_method", "interest_rate", "rate_period",
+	"processing_fee_percent", "penalty_percent", "grace_days", "min_amount", "max_amount", "savings_multiplier",
+	"min_tenure_months", "max_tenure_months", "max_active_loans", "min_membership_months", "require_up_to_date",
+	"guarantors_required", "guarantee_percent", "enabled"]
+
+
+def _products(cooperative, enabled_only=True):
+	loans.ensure_default_product(cooperative)
+	filters = {"cooperative": cooperative}
+	if enabled_only:
+		filters["enabled"] = 1
+	rows = frappe.get_all("Coop Loan Product", filters=filters, fields=PRODUCT_FIELDS, order_by="creation asc")
+	for r in rows:
+		r.rate_text = loans.describe_rate(r.interest_method, r.interest_rate, r.rate_period)
+	return rows
+
+
+@frappe.whitelist()
+def loan_products(cooperative):
+	"""The loans a member can choose from, with each one's terms in words."""
+	get_membership(cooperative)
+	return _products(cooperative)
+
+
+@frappe.whitelist()
+def loan_quote(cooperative, product, amount, tenure_months):
+	"""What a loan would cost, its instalments, and whether this member can take it."""
+	me = get_membership(cooperative)
+	if frappe.db.get_value("Coop Loan Product", product, "cooperative") != cooperative:
+		frappe.throw(_("Loan product not found"))
+	quote = loans.preview(product, flt(amount), cint(tenure_months))
+	quote.eligibility = loans.eligibility(me.name, product, flt(amount), cint(tenure_months))
+	return quote
 
 
 @frappe.whitelist()
@@ -147,7 +184,7 @@ def loan_eligibility(cooperative):
 
 @frappe.whitelist(methods=["POST"])
 @rate_limit(limit=10, seconds=60 * 60)
-def apply_loan(cooperative, amount, tenure_months=1, purpose=None):
+def apply_loan(cooperative, amount, tenure_months=1, purpose=None, product=None, guarantors=None):
 	me = get_membership(cooperative)
 	if not me.name:
 		frappe.throw(_("Only members can borrow"))
@@ -162,10 +199,16 @@ def apply_loan(cooperative, amount, tenure_months=1, purpose=None):
 			"principal": flt(amount),
 			"tenure_months": cint(tenure_months) or 1,
 			"purpose": purpose,
+			"product": product,
 			"status": "Pending",
 			"application_date": today(),
+			"guarantors": [{"member": g.get("member"), "amount": flt(g.get("amount"))} for g in _json(guarantors)],
 		}
 	).insert(ignore_permissions=True)
+	for g in doc.guarantors:
+		notify(g.user, _("{0} asked you to guarantee {1}").format(me.full_name, _money(g.amount, cooperative)),
+			_("Part of their loan of {0}. Your promise holds that much of your savings until it's repaid.").format(
+				_money(doc.principal, cooperative)), link=f"/loans/{doc.name}", cooperative=cooperative, kind="guarantee")
 	approvals.request(
 		cooperative, "Loan", ("Coop Loan", doc.name), amount=doc.principal, beneficiary=me.name,
 		summary=_("{0} asked to borrow {1} over {2} months").format(me.full_name, _money(doc.principal, cooperative),
@@ -184,9 +227,20 @@ def list_loans(cooperative, scope="mine", status=None, limit=50, start=0):
 def get_loan(name):
 	loan = frappe.get_doc("Coop Loan", name)
 	me = get_membership(loan.cooperative, allow_inactive=True)
-	if loan.member != me.name and not me.is_admin:
+	mine_as_guarantor = next((g for g in loan.guarantors if g.member == me.name), None)
+	if loan.member != me.name and not me.is_admin and not mine_as_guarantor:
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 	data = {f: loan.get(f) for f in LOAN_FIELDS}
+	data["product_name"] = frappe.db.get_value("Coop Loan Product", loan.product, "product_name") if loan.product else None
+	data["rate_text"] = loans.describe_rate(loan.interest_method or "Flat", loan.interest_rate, loan.rate_period or "Whole loan")
+	data["amount_to_send"] = flt(flt(loan.principal) - flt(loan.processing_fee), 2)
+	data["guarantors"] = [{"member": g.member, "member_name": g.member_name, "amount": g.amount, "status": g.status,
+		"responded_on": g.responded_on, "note": g.note} for g in loan.guarantors]
+	data["my_guarantee"] = {"amount": mine_as_guarantor.amount, "status": mine_as_guarantor.status} if mine_as_guarantor else None
+	data["guarantor_blocker"] = loans.guarantor_blocker(loan.name) if loan.status == "Pending" else None
+	data["restructures"] = [{"restructured_on": r.restructured_on, "outstanding": r.outstanding, "new_months": r.new_months,
+		"reason": r.reason} for r in loan.restructures]
+	data["can_restructure"] = loan.status == "Active" and loan.member != me.name and "loans" in (me.get("capabilities") or [])
 	data["cooperative"] = loan.cooperative
 	data["currency"] = frappe.db.get_value("Cooperative", loan.cooperative, "currency")
 	data["schedule"] = loan_schedule(loan)
@@ -376,7 +430,7 @@ def cancel_loan(name):
 
 REPAYMENT_FIELDS = [
 	"name", "loan", "member", "member_name", "amount", "payment_date", "status", "payment_method",
-	"reference", "notes", "review_note", "creation",
+	"reference", "notes", "review_note", "creation", "penalty_part", "interest_part", "principal_part",
 ]
 
 
@@ -394,6 +448,187 @@ WITHDRAWAL_FIELDS = [
 	"transfer_reference", "payout_bank_name", "payout_account_number", "payout_account_name", "receipt_disputed",
 	"dispute_note", "review_note", "creation",
 ]
+
+
+def _json(value):
+	if isinstance(value, str):
+		value = json.loads(value or "[]")
+	return value or []
+
+
+# Guarantors -----------------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def my_guarantees(cooperative):
+	"""Loans I've been asked to guarantee or am guaranteeing."""
+	me = get_membership(cooperative)
+	rows = frappe.db.sql(
+		"""select l.name as loan, l.member_name as borrower, l.principal, l.status as loan_status, l.balance,
+			g.amount, g.status, g.responded_on
+		from `tabCoop Loan Guarantor` g join `tabCoop Loan` l on l.name = g.parent
+		where g.member = %s and g.status != 'Released' and l.status in ('Pending', 'Approved', 'Sent', 'Active')
+		order by g.status = 'Pending' desc, l.creation desc""",
+		me.name,
+		as_dict=True,
+	)
+	return rows
+
+
+@frappe.whitelist(methods=["POST"])
+def respond_guarantee(loan, accept, note=None):
+	"""Accept or decline being a guarantor. Accepting holds that much of your savings until the loan is repaid."""
+	doc = frappe.get_doc("Coop Loan", loan)
+	me = get_membership(doc.cooperative)
+	row = next((g for g in doc.guarantors if g.member == me.name), None)
+	if not row or row.status != "Pending" or doc.status not in ("Pending", "Approved"):
+		frappe.throw(_("There's nothing to answer here"))
+	accept = accept in (True, 1, "1", "true", "True")
+	if accept:
+		free = member_balances(me.name).withdrawable
+		if flt(row.amount) > free + 0.005:
+			frappe.throw(_("You can guarantee at most {0} right now").format(_money(free, doc.cooperative)))
+	frappe.db.set_value("Coop Loan Guarantor", row.name, {"status": "Accepted" if accept else "Declined",
+		"responded_on": now_datetime(), "note": note})
+	amount = _money(row.amount, doc.cooperative)
+	if accept:
+		notify(doc.user, _("{0} agreed to guarantee {1} of your loan").format(me.full_name, amount), link=f"/loans/{doc.name}",
+			cooperative=doc.cooperative, kind="guarantee")
+		if not loans.guarantor_blocker(doc.name):
+			ap = approvals.open_request("Coop Loan", doc.name)
+			if ap:
+				approvals._notify_approvers(ap)
+	else:
+		notify(doc.user, _("{0} can't guarantee your loan").format(me.full_name),
+			note or _("Ask someone else to guarantee it instead."), link=f"/loans/{doc.name}", cooperative=doc.cooperative,
+			kind="guarantee")
+	return get_loan(loan)
+
+
+@frappe.whitelist(methods=["POST"])
+def replace_guarantor(loan, member, new_member, amount=None):
+	"""The borrower asks someone else after a guarantor declined (or hasn't answered)."""
+	doc = frappe.get_doc("Coop Loan", loan)
+	me = get_membership(doc.cooperative)
+	if doc.member != me.name or doc.status != "Pending":
+		frappe.throw(_("Only your own pending loan requests can change guarantors"), frappe.PermissionError)
+	row = next((g for g in doc.guarantors if g.member == member and g.status in ("Pending", "Declined")), None)
+	if not row:
+		frappe.throw(_("Choose a guarantor who declined or hasn't answered yet"))
+	m = frappe.db.get_value("Coop Member", new_member, ["name", "cooperative", "status", "full_name", "user"], as_dict=True)
+	if not m or m.cooperative != doc.cooperative or m.status != "Active" or new_member == doc.member or \
+			any(g.member == new_member for g in doc.guarantors):
+		frappe.throw(_("Choose another active member who isn't already a guarantor"))
+	amount = flt(amount) or flt(row.amount)
+	free = member_balances(new_member).withdrawable
+	if amount > free + 0.005:
+		frappe.throw(_("{0} can guarantee at most {1} right now").format(m.full_name, _money(free, doc.cooperative)))
+	frappe.db.set_value("Coop Loan Guarantor", row.name, {"member": new_member, "member_name": m.full_name, "user": m.user,
+		"amount": amount, "status": "Pending", "responded_on": None, "note": None})
+	notify(m.user, _("{0} asked you to guarantee {1}").format(me.full_name, _money(amount, doc.cooperative)),
+		_("Part of their loan of {0}.").format(_money(doc.principal, doc.cooperative)), link=f"/loans/{doc.name}",
+		cooperative=doc.cooperative, kind="guarantee")
+	return get_loan(loan)
+
+
+# Restructuring and the loan book ----------------------------------------------------------------
+
+
+@frappe.whitelist(methods=["POST"])
+def propose_restructure(loan, months, reason):
+	"""Spread what's left over a new number of months (no extra interest). Goes for approval."""
+	doc = frappe.get_doc("Coop Loan", loan)
+	me = get_membership(doc.cooperative, capability="loans")
+	ensure_not_self(me, doc.member, _("Another officer has to restructure your own loan"))
+	if doc.status != "Active":
+		frappe.throw(_("Only an active loan can be restructured"))
+	if not (reason or "").strip():
+		frappe.throw(_("Say why it's being restructured"))
+	months = cint(months)
+	if not 1 <= months <= 60:
+		frappe.throw(_("Choose between 1 and 60 months"))
+	if approvals.open_request("Coop Loan", doc.name):
+		frappe.throw(_("A change to this loan is already waiting for approval"))
+	frappe.db.set_value("Coop Loan", doc.name, {"restructure_months": months, "restructure_reason": reason.strip()})
+	approvals.request(doc.cooperative, "Loan restructure", ("Coop Loan", doc.name), amount=doc.balance,
+		beneficiary=doc.member, summary=_("Spread {0}'s remaining {1} over {2} months").format(
+			doc.member_name, _money(doc.balance, doc.cooperative), months))
+	return get_loan(loan)
+
+
+def on_restructure_decided(approval, approved, note=None):
+	doc = frappe.get_doc("Coop Loan", approval.reference_name)
+	months, reason = doc.restructure_months, doc.restructure_reason
+	if approved and months:
+		loans.restructure(doc.name, months, reason)
+		notify(doc.user, _("Your loan now runs over {0} more months").format(months),
+			_("What's left is spread evenly, with no extra interest. See your new repayment plan."), link=f"/loans/{doc.name}",
+			cooperative=doc.cooperative, kind="loan-restructured")
+	else:
+		frappe.db.set_value("Coop Loan", doc.name, {"restructure_months": None, "restructure_reason": None})
+
+
+@frappe.whitelist()
+def loan_book(cooperative):
+	"""The loan portfolio: what's out, what's late (portfolio at risk) and who to follow up."""
+	me = get_membership(cooperative, capability="loans")
+	active = frappe.get_all("Coop Loan", filters={"cooperative": cooperative, "status": "Active"},
+		fields=["name", "member", "member_name", "principal", "balance", "overdue_amount", "days_overdue", "due_date",
+			"product", "received_on"], order_by="days_overdue desc, balance desc")
+	members = {m.name: m for m in frappe.get_all("Coop Member", filters={"cooperative": cooperative},
+		fields=["name", "phone", "member_number"])}
+	total = flt(sum(flt(l.balance) for l in active), 2)
+	buckets = []
+	for label, low, high in ((_("1–30 days"), 1, 30), (_("31–60 days"), 31, 60), (_("61–90 days"), 61, 90), (_("Over 90 days"), 91, 10 ** 6)):
+		bal = flt(sum(flt(l.balance) for l in active if low <= cint(l.days_overdue) <= high), 2)
+		buckets.append({"label": label, "balance": bal, "count": sum(1 for l in active if low <= cint(l.days_overdue) <= high),
+			"percent": flt(bal / total * 100, 1) if total else 0})
+	late = [l for l in active if cint(l.days_overdue) > 0]
+	for l in late:
+		l.phone = members.get(l.member, {}).get("phone")
+		l.member_number = members.get(l.member, {}).get("member_number")
+		l.guarantors = frappe.get_all("Coop Loan Guarantor", filters={"parent": l.name, "status": "Accepted"},
+			fields=["member_name", "amount"])
+	return {
+		"currency": frappe.db.get_value("Cooperative", cooperative, "currency"),
+		"active_count": len(active),
+		"outstanding": total,
+		"in_arrears": flt(sum(flt(l.balance) for l in late), 2),
+		"par_percent": flt(sum(flt(l.balance) for l in late) / total * 100, 1) if total else 0,
+		"overdue_amount": flt(sum(flt(l.overdue_amount) for l in late), 2),
+		"buckets": buckets,
+		"late": late,
+		"waiting_to_send": frappe.db.count("Coop Loan", {"cooperative": cooperative, "status": "Approved"}),
+		"pending": frappe.db.count("Coop Loan", {"cooperative": cooperative, "status": "Pending"}),
+		"can_restructure": "loans" in me.capabilities,
+	}
+
+
+# Loan products (Admins) -----------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def admin_loan_products(cooperative):
+	get_membership(cooperative, admin=True)
+	return _products(cooperative, enabled_only=False)
+
+
+@frappe.whitelist(methods=["POST"])
+def save_loan_product(cooperative, product_name, name=None, **values):
+	get_membership(cooperative, capability="settings")
+	doc = frappe.get_doc("Coop Loan Product", name) if name else frappe.new_doc("Coop Loan Product")
+	if name and doc.cooperative != cooperative:
+		frappe.throw(_("Loan product not found"))
+	doc.cooperative = cooperative
+	doc.product_name = (product_name or "").strip()
+	for field in PRODUCT_FIELDS:
+		if field in values and field not in ("name", "product_name"):
+			doc.set(field, values[field])
+	loans.validate_product(doc)
+	doc.save(ignore_permissions=True)
+	if not frappe.db.exists("Coop Loan Product", {"cooperative": cooperative, "enabled": 1}):
+		frappe.throw(_("Keep at least one loan product switched on"))
+	return _products(cooperative, enabled_only=False)
 
 
 def _withdrawing_member(cooperative):

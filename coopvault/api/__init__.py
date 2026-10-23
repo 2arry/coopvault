@@ -46,6 +46,10 @@ DENIED = {
 	"books": _lt("Only the cooperative's officers can see the books"),
 	"journal": _lt("Only the accountant, treasurer or an admin prepares journal entries"),
 	"close": _lt("Only the accountant or an admin can close the books or prepare a share-out"),
+	"loans": _lt("Only the loan officer, treasurer, chairman or an admin can do this"),
+	"announce": _lt("Only the chairman, treasurer or an admin can post announcements"),
+	"opening": _lt("Only the treasurer, accountant or an admin can propose opening balances"),
+	"members": _lt("Only the cooperative's officers can do this"),
 }
 
 

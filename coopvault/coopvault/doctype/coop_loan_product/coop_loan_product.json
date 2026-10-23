@@ -1,0 +1,246 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-10-21 18:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "cooperative",
+  "product_name",
+  "enabled",
+  "description",
+  "interest_section",
+  "interest_method",
+  "interest_rate",
+  "rate_period",
+  "cb1",
+  "processing_fee_percent",
+  "penalty_percent",
+  "grace_days",
+  "limits_section",
+  "min_amount",
+  "max_amount",
+  "savings_multiplier",
+  "cb2",
+  "min_tenure_months",
+  "max_tenure_months",
+  "max_active_loans",
+  "eligibility_section",
+  "min_membership_months",
+  "require_up_to_date",
+  "cb3",
+  "guarantors_required",
+  "guarantee_percent"
+ ],
+ "fields": [
+  {
+   "fieldname": "cooperative",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Cooperative",
+   "options": "Cooperative",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "bold": 1,
+   "fieldname": "product_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "description": "Shown to members when they choose a loan",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "interest_section",
+   "fieldtype": "Section Break",
+   "label": "Interest"
+  },
+  {
+   "default": "Flat",
+   "description": "Flat: interest on the full amount for the whole term. Reducing balance: interest each month on what's still owed.",
+   "fieldname": "interest_method",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Interest Method",
+   "options": "Flat\nReducing balance\nInterest free",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "interest_rate",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Interest Rate"
+  },
+  {
+   "default": "Per month",
+   "description": "Whole loan: one rate for the whole term (flat loans only)",
+   "fieldname": "rate_period",
+   "fieldtype": "Select",
+   "label": "Rate Period",
+   "options": "Per month\nPer year\nWhole loan",
+   "reqd": 1
+  },
+  {
+   "fieldname": "cb1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Taken off the amount sent and booked as fee income",
+   "fieldname": "processing_fee_percent",
+   "fieldtype": "Percent",
+   "label": "Processing Fee"
+  },
+  {
+   "default": "0",
+   "description": "Per month, on the overdue part of an instalment",
+   "fieldname": "penalty_percent",
+   "fieldtype": "Percent",
+   "label": "Late Penalty"
+  },
+  {
+   "default": "3",
+   "fieldname": "grace_days",
+   "fieldtype": "Int",
+   "label": "Days of Grace Before a Penalty"
+  },
+  {
+   "fieldname": "limits_section",
+   "fieldtype": "Section Break",
+   "label": "Limits"
+  },
+  {
+   "default": "0",
+   "fieldname": "min_amount",
+   "fieldtype": "Currency",
+   "label": "Min Amount"
+  },
+  {
+   "default": "0",
+   "fieldname": "max_amount",
+   "fieldtype": "Currency",
+   "label": "Max Amount (0 = no limit)"
+  },
+  {
+   "default": "1",
+   "description": "1 = up to everything they've saved, never more",
+   "fieldname": "savings_multiplier",
+   "fieldtype": "Float",
+   "label": "Share of Savings That Can Be Borrowed"
+  },
+  {
+   "fieldname": "cb2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "min_tenure_months",
+   "fieldtype": "Int",
+   "label": "Min Tenure Months"
+  },
+  {
+   "default": "12",
+   "fieldname": "max_tenure_months",
+   "fieldtype": "Int",
+   "label": "Max Tenure Months"
+  },
+  {
+   "default": "1",
+   "fieldname": "max_active_loans",
+   "fieldtype": "Int",
+   "label": "Loans of Any Kind a Member Can Have at Once"
+  },
+  {
+   "fieldname": "eligibility_section",
+   "fieldtype": "Section Break",
+   "label": "Eligibility"
+  },
+  {
+   "default": "0",
+   "fieldname": "min_membership_months",
+   "fieldtype": "Int",
+   "label": "Months as a Member Before Borrowing"
+  },
+  {
+   "default": "1",
+   "fieldname": "require_up_to_date",
+   "fieldtype": "Check",
+   "label": "Contributions Must Be Up to Date"
+  },
+  {
+   "fieldname": "cb3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "guarantors_required",
+   "fieldtype": "Int",
+   "label": "Guarantors Needed"
+  },
+  {
+   "default": "100",
+   "description": "Guarantors' pledges are held from their own savings until the loan is repaid",
+   "fieldname": "guarantee_percent",
+   "fieldtype": "Percent",
+   "label": "Share of the Loan Guarantors Must Cover"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-21 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CoopVault",
+ "name": "Coop Loan Product",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Coop Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "product_name,cooperative",
+ "show_title_field_in_link": 1,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "product_name",
+ "track_changes": 1
+}

@@ -46,7 +46,9 @@ for ln in frappe.get_all("Coop Loan", filters={"status": ["in", ["Sent", "Active
 	pos = loan_position(ln.name)
 	if ln.status == "Repaid" and (abs(pos.principal_outstanding) > 0.005 or abs(pos.interest_received - flt(ln.interest_amount)) > 0.01):
 		problem(f"{ln.name} repaid but books show principal {pos.principal_outstanding}, interest {pos.interest_received}")
-	collected = flt(flt(ln.principal) - pos.principal_outstanding + pos.interest_received, 2)
+	penalties = flt(frappe.db.sql("""select coalesce(sum(credit - debit), 0) from `tabCoop Journal Line`
+		where loan=%s and account_type='Penalty Income' and is_posted=1""", ln.name)[0][0])
+	collected = flt(flt(ln.principal) - pos.principal_outstanding + pos.interest_received + penalties, 2)
 	if abs(collected - flt(ln.amount_repaid)) > 0.01:
 		problem(f"{ln.name}: repayments {ln.amount_repaid} but books collected {collected}")
 
@@ -54,7 +56,7 @@ for ln in frappe.get_all("Coop Loan", filters={"status": ["in", ["Sent", "Active
 for coop in frappe.get_all("Cooperative", pluck="name"):
 	ins = flt(frappe.db.sql("select coalesce(sum(amount),0) from `tabCoop Contribution` where cooperative=%s and status='Confirmed'", coop)[0][0])
 	ins += flt(frappe.db.sql("select coalesce(sum(amount),0) from `tabCoop Loan Repayment` where cooperative=%s and status='Confirmed'", coop)[0][0])
-	outs = flt(frappe.db.sql("select coalesce(sum(principal),0) from `tabCoop Loan` where cooperative=%s and status in ('Sent','Active','Repaid')", coop)[0][0])
+	outs = flt(frappe.db.sql("select coalesce(sum(principal - processing_fee),0) from `tabCoop Loan` where cooperative=%s and status in ('Sent','Active','Repaid')", coop)[0][0])
 	outs += flt(frappe.db.sql("select coalesce(sum(amount),0) from `tabCoop Withdrawal` where cooperative=%s and status in ('Sent','Completed')", coop)[0][0])
 	charges = type_balance(coop, ["Payment Charges"])
 	unallocated = -type_balance(coop, ["Unallocated Receipts"])

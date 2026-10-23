@@ -31,8 +31,11 @@ class Cooperative(Document):
 		from coopvault.accounting import ensure_chart
 		from coopvault.approvals import ensure_default_rules
 
+		from coopvault.loans import ensure_default_product
+
 		ensure_chart(self.name)
 		ensure_default_rules(self.name)
+		ensure_default_product(self.name)
 
 	def validate(self):
 		if not 0 <= flt(self.loan_multiplier) <= 1:

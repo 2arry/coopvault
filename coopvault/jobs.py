@@ -2,10 +2,11 @@
 
 import frappe
 from frappe import _
-from frappe.utils import date_diff, getdate, today
+from frappe.utils import add_days, date_diff, getdate, today
 
+from coopvault import loans
 from coopvault.ledger import TRACKED, contribution_standing, plan_on, plans_for
-from coopvault.notify import notify
+from coopvault.notify import holders, notify
 from coopvault.utils import money_text
 
 REMIND_DAYS_BEFORE_END = 3
@@ -51,3 +52,34 @@ def daily_cleanup():
 	notify_module.cleanup()
 	frappe.db.delete("Coop Password Reset", {"expires_on": ["<", frappe.utils.add_days(today(), -30)]})
 	frappe.db.commit()
+
+
+def loans_daily():
+	"""Daily: late penalties and arrears on active loans, a reminder three days before an
+	instalment is due, and a heads-up to the borrower and the loan officers once it's late."""
+	soon = add_days(getdate(today()), 3)
+	for l in frappe.get_all("Coop Loan", filters={"status": "Active"}, fields=["name", "cooperative", "user", "member_name"]):
+		try:
+			added = loans.accrue_penalties(l.name)
+			loans.refresh(l.name)
+			st = loans.state(l.name)
+			currency = frappe.db.get_value("Cooperative", l.cooperative, "currency")
+			link = f"/loans/{l.name}"
+			if added:
+				notify(l.user, _("A late fee of {0} was added to your loan").format(money_text(added, currency)),
+					_("{0} is overdue. Pay it to stop more fees.").format(money_text(st.overdue_amount, currency)),
+					link=link, cooperative=l.cooperative, kind="loan-overdue")
+			elif st.next_due_date and getdate(st.next_due_date) == soon:
+				notify(l.user, _("{0} due on your loan in 3 days").format(money_text(st.next_amount, currency)),
+					link=link, cooperative=l.cooperative, kind="loan-due")
+			if st.days_overdue == 1:
+				notify(l.user, _("Your loan payment is overdue"), _("{0} is due now.").format(money_text(st.overdue_amount, currency)),
+					link=link, cooperative=l.cooperative, kind="loan-overdue")
+				notify(holders(l.cooperative, "loans", exclude_users=[l.user]),
+					_("{0}'s loan payment is overdue").format(l.member_name), money_text(st.overdue_amount, currency),
+					link=link, cooperative=l.cooperative, kind="loan-overdue")
+			frappe.db.commit()
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=f"Loan check failed for {l.name}", message=frappe.get_traceback())
+

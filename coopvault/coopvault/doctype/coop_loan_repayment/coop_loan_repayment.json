@@ -26,7 +26,12 @@
   "reviewed_by",
   "reviewed_on",
   "review_note",
-  "recorded_by"
+  "recorded_by",
+  "split_section",
+  "penalty_part",
+  "interest_part",
+  "cb3",
+  "principal_part"
  ],
  "fields": [
   {
@@ -158,11 +163,38 @@
    "label": "Recorded By",
    "options": "User",
    "read_only": 1
+  },
+  {
+   "fieldname": "split_section",
+   "fieldtype": "Section Break",
+   "label": "How It Was Applied"
+  },
+  {
+   "fieldname": "penalty_part",
+   "fieldtype": "Currency",
+   "label": "Late Penalties",
+   "read_only": 1
+  },
+  {
+   "fieldname": "interest_part",
+   "fieldtype": "Currency",
+   "label": "Interest",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "principal_part",
+   "fieldtype": "Currency",
+   "label": "Principal",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 08:24:02.961738",
+ "modified": "2026-10-23 07:17:47.068396",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Loan Repayment",

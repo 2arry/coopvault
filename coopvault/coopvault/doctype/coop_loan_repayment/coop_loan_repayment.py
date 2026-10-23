@@ -6,7 +6,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt, now_datetime
 
-from coopvault import postings
+from coopvault import loans, postings
 from coopvault.ledger import refresh_all
 from coopvault.utils import money_text
 
@@ -37,6 +37,10 @@ class CoopLoanRepayment(Document):
 						money_text(loan.balance, currency)
 					)
 				)
+			if frappe.db.exists("Coop Loan Instalment", {"parent": self.loan}):
+				# Oldest instalment first; within it penalty, then interest, then principal
+				parts = loans.allocate(self.loan, self.amount, exclude=None if self.is_new() else self.name)
+				self.penalty_part, self.interest_part, self.principal_part = parts.penalty, parts.interest, parts.principal
 		if self.has_value_changed("status") and self.status in ("Confirmed", "Rejected", "Reversed"):
 			self.reviewed_by = self.reviewed_by or frappe.session.user
 			self.reviewed_on = now_datetime()
