@@ -6,6 +6,7 @@ from frappe import _
 
 from coopvault import approvals
 from coopvault.api.coop import next_member_number
+from coopvault.utils import money_text
 
 
 def execute():
@@ -22,11 +23,11 @@ def execute():
 	for l in frappe.get_all("Coop Loan", filters={"status": "Pending"},
 			fields=["name", "cooperative", "user", "member", "member_name", "principal"]):
 		ask(l.cooperative, "Loan", ("Coop Loan", l.name), l.user, l.principal, l.member,
-			_("{0} asked to borrow {1}").format(l.member_name, frappe.utils.fmt_money(l.principal)))
+			_("{0} asked to borrow {1}").format(l.member_name, money_text(l.principal)))
 	for w in frappe.get_all("Coop Withdrawal", filters={"status": "Pending"},
 			fields=["name", "cooperative", "user", "member", "member_name", "amount"]):
 		ask(w.cooperative, "Withdrawal", ("Coop Withdrawal", w.name), w.user, w.amount, w.member,
-			_("{0} asked to withdraw {1}").format(w.member_name, frappe.utils.fmt_money(w.amount)))
+			_("{0} asked to withdraw {1}").format(w.member_name, money_text(w.amount)))
 	for j in frappe.get_all("Coop Journal Entry", filters={"status": "Draft"},
 			fields=["name", "cooperative", "prepared_by", "total_debit", "remarks"]):
 		ask(j.cooperative, "Manual journal", ("Coop Journal Entry", j.name), j.prepared_by, j.total_debit,
