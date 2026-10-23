@@ -11,9 +11,10 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import cint, flt, getdate, now_datetime, today
 
-from coopvault.api import ensure_not_self, get_membership
+from coopvault import approvals
+from coopvault.api import can, ensure_not_self, get_membership, require
 from coopvault.ledger import cooperative_totals, loan_schedule, member_balances
-from coopvault.notify import notify, staff_of
+from coopvault.notify import holders, notify, staff_of
 from coopvault.utils import check_hold, mask_account, money_text
 
 
@@ -57,7 +58,7 @@ def propose_opening_balance(cooperative, member, amount, as_of=None, note=None):
 	An admin or the treasurer proposes it (never for themselves); it only counts once the member
 	agrees in the app.
 	"""
-	me = get_membership(cooperative, admin=True)
+	me = get_membership(cooperative, capability="opening")
 	m = frappe.db.get_value("Coop Member", member, ["name", "cooperative", "user", "status"], as_dict=True)
 	if not m or m.cooperative != cooperative or m.status != "Active":
 		frappe.throw(_("Member not found"))
@@ -165,13 +166,10 @@ def apply_loan(cooperative, amount, tenure_months=1, purpose=None):
 			"application_date": today(),
 		}
 	).insert(ignore_permissions=True)
-	notify(
-		staff_of(cooperative, exclude_users=[me.user]),
-		_("{0} asked to borrow {1}").format(me.full_name, _money(doc.principal, cooperative)),
-		purpose,
-		link="/admin?tab=reviews",
-		cooperative=cooperative,
-		kind="loan-request",
+	approvals.request(
+		cooperative, "Loan", ("Coop Loan", doc.name), amount=doc.principal, beneficiary=me.name,
+		summary=_("{0} asked to borrow {1} over {2} months").format(me.full_name, _money(doc.principal, cooperative),
+			doc.tenure_months),
 	)
 	return doc.as_dict()
 
@@ -198,7 +196,7 @@ def get_loan(name):
 	)
 	data["confirm_after_days"] = cint(frappe.db.get_single_value("CoopVault Settings", "confirm_after_days")) or 7
 	if me.is_admin:
-		data["member_balances"] = member_balances(loan.member, exclude_loan=name if loan.status == "Pending" else None)
+		data["member_balances"] = member_balances(loan.member, exclude_loan=name if loan.status in ("Pending", "Approved") else None)
 		data["payout_account"] = frappe.db.get_value(
 			"Coop Member", loan.member,
 			["payout_bank_name", "payout_account_number", "payout_account_name", "payout_changed_on"], as_dict=True,
@@ -208,36 +206,86 @@ def get_loan(name):
 
 @frappe.whitelist(methods=["POST"])
 def review_loan(name, action, transfer_reference=None, note=None):
-	"""Send (after transferring the money) or reject a loan request. Never your own."""
+	"""Decide a loan request (through the group's approval rule) and/or send an approved loan.
+
+	approve: a pending request gets this officer's approval; once fully approved, a transfer
+	reference sends it straight away if this officer may send money. An approved loan is sent.
+	reject: declines it, at any point before the money goes."""
 	loan = frappe.get_doc("Coop Loan", name)
 	me = get_membership(loan.cooperative, admin=True)
-	ensure_not_self(me, loan.member, _("Another admin or the treasurer has to send your own loan"))
-	if loan.status != "Pending":
-		frappe.throw(_("Only pending loan requests can be reviewed"))
-	if action == "approve":
-		loan.status = "Sent"
-		loan.transfer_reference = (transfer_reference or "").strip()
-	elif action == "reject":
-		loan.status = "Rejected"
-	else:
+	ensure_not_self(me, loan.member, _("Another officer has to deal with your own loan"))
+	if action not in ("approve", "reject"):
 		frappe.throw(_("Invalid action"))
-	loan.review_note = note
-	loan.save(ignore_permissions=True)
-
-	amount = _money(loan.principal, loan.cooperative)
-	if loan.status == "Sent":
-		notify(
-			loan.user,
-			_("{0} is on its way to {1} {2}").format(amount, loan.payout_bank_name, mask_account(loan.payout_account_number)),
-			_("Confirm in the app when it arrives. Your repayments start from that day."),
-			link=f"/loans/{loan.name}",
-			cooperative=loan.cooperative,
-			kind="loan-sent",
-		)
+	if loan.status == "Pending":
+		approvals.decide_for("Coop Loan", loan.name, action == "approve", note)
+		loan.reload()
+		if loan.status == "Approved" and (transfer_reference or "").strip() and can(me, "pay_out"):
+			_send_loan(loan, me, transfer_reference, note)
+	elif loan.status == "Approved":
+		require(me, "pay_out")
+		if action == "approve":
+			_send_loan(loan, me, transfer_reference, note)
+		else:
+			loan.status = "Rejected"
+			loan.review_note = note
+			loan.save(ignore_permissions=True)
+			notify(loan.user, _("Your loan of {0} was declined").format(_money(loan.principal, loan.cooperative)), note,
+				link=f"/loans/{loan.name}", cooperative=loan.cooperative, kind="loan-rejected")
 	else:
+		frappe.throw(_("This loan has already been dealt with"))
+	return get_loan(name)
+
+
+@frappe.whitelist(methods=["POST"])
+def send_loan(name, transfer_reference, note=None):
+	"""Record that an approved loan was transferred from the group's bank."""
+	loan = frappe.get_doc("Coop Loan", name)
+	me = get_membership(loan.cooperative, capability="pay_out")
+	ensure_not_self(me, loan.member, _("Another officer has to send your own loan"))
+	if loan.status != "Approved":
+		frappe.throw(_("Only an approved loan can be sent"))
+	_send_loan(loan, me, transfer_reference, note)
+	return get_loan(name)
+
+
+def _send_loan(loan, me, transfer_reference, note=None):
+	loan.status = "Sent"
+	loan.transfer_reference = (transfer_reference or "").strip()
+	if note:
+		loan.review_note = note
+	loan.save(ignore_permissions=True)
+	notify(
+		loan.user,
+		_("{0} is on its way to {1} {2}").format(_money(loan.principal, loan.cooperative), loan.payout_bank_name,
+			mask_account(loan.payout_account_number)),
+		_("Confirm in the app when it arrives. Your repayments start from that day."),
+		link=f"/loans/{loan.name}",
+		cooperative=loan.cooperative,
+		kind="loan-sent",
+	)
+
+
+def on_loan_decided(approval, approved, note=None):
+	loan = frappe.get_doc("Coop Loan", approval.reference_name)
+	if loan.status != "Pending":
+		return
+	amount = _money(loan.principal, loan.cooperative)
+	if approved:
+		loan.status = "Approved"
+		loan.review_note = note or loan.review_note
+		loan.save(ignore_permissions=True)
+		notify(loan.user, _("Your loan of {0} was approved").format(amount),
+			_("The treasurer will send it to your bank account and let you know."), link=f"/loans/{loan.name}",
+			cooperative=loan.cooperative, kind="loan-approved")
+		notify(holders(loan.cooperative, "pay_out", exclude_users=[loan.user]),
+			_("Send {0} to {1}").format(amount, loan.member_name), _("The loan was approved."),
+			link="/admin?tab=reviews", cooperative=loan.cooperative, kind="loan-approved")
+	else:
+		loan.status = "Rejected"
+		loan.review_note = note
+		loan.save(ignore_permissions=True)
 		notify(loan.user, _("Your loan request for {0} was declined").format(amount), note, link=f"/loans/{loan.name}",
 			cooperative=loan.cooperative, kind="loan-rejected")
-	return get_loan(name)
 
 
 def _confirm_received(doc, label, link):
@@ -294,7 +342,7 @@ def report_loan_not_received(name, note=None):
 def update_loan_transfer(name, transfer_reference, note=None):
 	"""After a borrower reports a missing transfer: record the corrected or new transfer."""
 	loan = frappe.get_doc("Coop Loan", name)
-	me = get_membership(loan.cooperative, admin=True)
+	me = get_membership(loan.cooperative, capability="pay_out")
 	ensure_not_self(me, loan.member)
 	if loan.status != "Sent":
 		frappe.throw(_("This loan isn't waiting for a transfer"))
@@ -315,10 +363,11 @@ def cancel_loan(name):
 	me = get_membership(loan.cooperative, allow_inactive=True)
 	if loan.member != me.name:
 		frappe.throw(_("You can only cancel your own loan requests"), frappe.PermissionError)
-	if loan.status != "Pending":
-		frappe.throw(_("Only pending loan requests can be cancelled"))
+	if loan.status not in ("Pending", "Approved"):
+		frappe.throw(_("Only a loan that hasn't been sent can be cancelled"))
 	loan.status = "Cancelled"
 	loan.save(ignore_permissions=True)
+	approvals.cancel("Coop Loan", loan.name)
 	return {"ok": True}
 
 
@@ -368,7 +417,7 @@ def withdrawal_eligibility(cooperative):
 		"pool_balance": cooperative_totals(cooperative).pool_balance,
 		"currency": frappe.db.get_value("Cooperative", cooperative, "currency"),
 		"payout_account": payout,
-		"pending": frappe.db.exists("Coop Withdrawal", {"member": me.name, "status": ["in", ["Pending", "Sent"]]}),
+		"pending": frappe.db.exists("Coop Withdrawal", {"member": me.name, "status": ["in", ["Pending", "Approved", "Sent"]]}),
 	}
 
 
@@ -379,7 +428,7 @@ def request_withdrawal(cooperative, amount, reason=None):
 	check_hold(me.name)
 	if not frappe.db.get_value("Coop Member", me.name, "payout_account_number"):
 		frappe.throw(_("Add the bank account to receive the money first (Me → Where to send my money)"))
-	if frappe.db.exists("Coop Withdrawal", {"member": me.name, "status": ["in", ["Pending", "Sent"]]}):
+	if frappe.db.exists("Coop Withdrawal", {"member": me.name, "status": ["in", ["Pending", "Approved", "Sent"]]}):
 		frappe.throw(_("You already have a withdrawal in progress"))
 	doc = frappe.get_doc(
 		{
@@ -392,13 +441,9 @@ def request_withdrawal(cooperative, amount, reason=None):
 			"requested_on": today(),
 		}
 	).insert(ignore_permissions=True)
-	notify(
-		staff_of(cooperative, exclude_users=[me.user]),
-		_("{0} asked to withdraw {1}").format(me.full_name, _money(doc.amount, cooperative)),
-		reason,
-		link="/admin?tab=reviews",
-		cooperative=cooperative,
-		kind="withdrawal-request",
+	approvals.request(
+		cooperative, "Withdrawal", ("Coop Withdrawal", doc.name), amount=doc.amount, beneficiary=me.name,
+		summary=_("{0} asked to withdraw {1}").format(me.full_name, _money(doc.amount, cooperative)),
 	)
 	return doc.as_dict()
 
@@ -433,39 +478,87 @@ def get_withdrawal(name):
 def cancel_withdrawal(name):
 	doc = frappe.get_doc("Coop Withdrawal", name)
 	me = get_membership(doc.cooperative, allow_inactive=True)
-	if doc.member != me.name or doc.status != "Pending":
-		frappe.throw(_("Only your own pending requests can be cancelled"), frappe.PermissionError)
+	if doc.member != me.name or doc.status not in ("Pending", "Approved"):
+		frappe.throw(_("Only your own requests that haven't been sent can be cancelled"), frappe.PermissionError)
 	doc.status = "Cancelled"
 	doc.save(ignore_permissions=True)
+	approvals.cancel("Coop Withdrawal", doc.name)
 	return {"ok": True}
 
 
 @frappe.whitelist(methods=["POST"])
 def review_withdrawal(name, action, transfer_reference=None, note=None):
+	"""Like review_loan: approve or decline a request through the approval rule, and send it once approved."""
 	doc = frappe.get_doc("Coop Withdrawal", name)
 	me = get_membership(doc.cooperative, admin=True)
-	ensure_not_self(me, doc.member, _("Another admin or the treasurer has to send your own withdrawal"))
-	if doc.status != "Pending":
-		frappe.throw(_("Only pending withdrawals can be reviewed"))
-	if action == "approve":
-		doc.status = "Sent"
-		doc.transfer_reference = (transfer_reference or "").strip()
-	elif action == "reject":
-		doc.status = "Rejected"
-		doc.reviewed_by = frappe.session.user
-	else:
+	ensure_not_self(me, doc.member, _("Another officer has to deal with your own withdrawal"))
+	if action not in ("approve", "reject"):
 		frappe.throw(_("Invalid action"))
-	doc.review_note = note
-	doc.save(ignore_permissions=True)
-	amount = _money(doc.amount, doc.cooperative)
-	if doc.status == "Sent":
-		notify(doc.user, _("{0} is on its way to {1} {2}").format(amount, doc.payout_bank_name,
-			mask_account(doc.payout_account_number)), _("Confirm in the app when it arrives."),
-			link=f"/withdrawals/{doc.name}", cooperative=doc.cooperative, kind="withdrawal-sent")
+	if doc.status == "Pending":
+		approvals.decide_for("Coop Withdrawal", doc.name, action == "approve", note)
+		doc.reload()
+		if doc.status == "Approved" and (transfer_reference or "").strip() and can(me, "pay_out"):
+			_send_withdrawal(doc, transfer_reference, note)
+	elif doc.status == "Approved":
+		require(me, "pay_out")
+		if action == "approve":
+			_send_withdrawal(doc, transfer_reference, note)
+		else:
+			doc.status = "Rejected"
+			doc.review_note = note
+			doc.reviewed_by = frappe.session.user
+			doc.save(ignore_permissions=True)
+			notify(doc.user, _("Your withdrawal of {0} was declined").format(_money(doc.amount, doc.cooperative)), note,
+				link=f"/withdrawals/{doc.name}", cooperative=doc.cooperative, kind="withdrawal-rejected")
 	else:
+		frappe.throw(_("This withdrawal has already been dealt with"))
+	return get_withdrawal(name)
+
+
+@frappe.whitelist(methods=["POST"])
+def send_withdrawal(name, transfer_reference, note=None):
+	doc = frappe.get_doc("Coop Withdrawal", name)
+	me = get_membership(doc.cooperative, capability="pay_out")
+	ensure_not_self(me, doc.member, _("Another officer has to send your own withdrawal"))
+	if doc.status != "Approved":
+		frappe.throw(_("Only an approved withdrawal can be sent"))
+	_send_withdrawal(doc, transfer_reference, note)
+	return get_withdrawal(name)
+
+
+def _send_withdrawal(doc, transfer_reference, note=None):
+	doc.status = "Sent"
+	doc.transfer_reference = (transfer_reference or "").strip()
+	if note:
+		doc.review_note = note
+	doc.save(ignore_permissions=True)
+	notify(doc.user, _("{0} is on its way to {1} {2}").format(_money(doc.amount, doc.cooperative), doc.payout_bank_name,
+		mask_account(doc.payout_account_number)), _("Confirm in the app when it arrives."),
+		link=f"/withdrawals/{doc.name}", cooperative=doc.cooperative, kind="withdrawal-sent")
+
+
+def on_withdrawal_decided(approval, approved, note=None):
+	doc = frappe.get_doc("Coop Withdrawal", approval.reference_name)
+	if doc.status != "Pending":
+		return
+	amount = _money(doc.amount, doc.cooperative)
+	if approved:
+		doc.status = "Approved"
+		doc.review_note = note or doc.review_note
+		doc.save(ignore_permissions=True)
+		notify(doc.user, _("Your withdrawal of {0} was approved").format(amount),
+			_("The treasurer will send it to your bank account."), link=f"/withdrawals/{doc.name}",
+			cooperative=doc.cooperative, kind="withdrawal-approved")
+		notify(holders(doc.cooperative, "pay_out", exclude_users=[doc.user]),
+			_("Send {0} to {1}").format(amount, doc.member_name), _("The withdrawal was approved."),
+			link="/admin?tab=reviews", cooperative=doc.cooperative, kind="withdrawal-approved")
+	else:
+		doc.status = "Rejected"
+		doc.review_note = note
+		doc.reviewed_by = frappe.session.user
+		doc.save(ignore_permissions=True)
 		notify(doc.user, _("Your withdrawal of {0} was declined").format(amount), note,
 			link=f"/withdrawals/{doc.name}", cooperative=doc.cooperative, kind="withdrawal-rejected")
-	return get_withdrawal(name)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -495,7 +588,7 @@ def report_withdrawal_not_received(name, note=None):
 @frappe.whitelist(methods=["POST"])
 def update_withdrawal_transfer(name, transfer_reference, note=None):
 	doc = frappe.get_doc("Coop Withdrawal", name)
-	me = get_membership(doc.cooperative, admin=True)
+	me = get_membership(doc.cooperative, capability="pay_out")
 	ensure_not_self(me, doc.member)
 	if doc.status != "Sent":
 		frappe.throw(_("This withdrawal isn't waiting for a transfer"))
@@ -574,6 +667,78 @@ def get_receipt(doctype, name):
 	}
 
 
+# Offline payments (recorded by one officer, approved by another) ---------------------------
+
+
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=60, seconds=60 * 10)
+def record_offline_payment(cooperative, member, amount, payment_date, reference, payment_method="Bank Transfer",
+		loan=None, note=None):
+	"""A transfer or cash payment made outside Paystack. It's entered as text (no receipts or
+	images) and only counts once another officer checks it arrived and approves it."""
+	me = get_membership(cooperative, capability="record")
+	m = frappe.db.get_value("Coop Member", member, ["name", "cooperative", "status", "full_name"], as_dict=True)
+	if not m or m.cooperative != cooperative:
+		frappe.throw(_("Member not found"))
+	if m.status != "Active":
+		frappe.throw(_("Payments can only be recorded for active members"))
+	if payment_method not in ("Bank Transfer", "Cash"):
+		frappe.throw(_("Choose bank transfer or cash"))
+	reference = (reference or "").strip()
+	if payment_method == "Bank Transfer" and not reference:
+		frappe.throw(_("Enter the bank reference so the transfer can be checked against the statement"))
+	amount = flt(amount, 2)
+	if amount <= 0:
+		frappe.throw(_("Enter the amount"))
+	if getdate(payment_date) > getdate(today()):
+		frappe.throw(_("The payment date can't be in the future"))
+	for doctype in ("Coop Contribution", "Coop Loan Repayment"):
+		if reference and frappe.db.exists(doctype, {"cooperative": cooperative, "reference": reference,
+				"status": ["in", ["Pending", "Confirmed"]]}):
+			frappe.throw(_("A payment with reference {0} has already been recorded").format(reference))
+	common = {"cooperative": cooperative, "member": member, "amount": amount, "payment_method": payment_method,
+		"reference": reference or None, "status": "Pending", "notes": note, "recorded_by": frappe.session.user}
+	if loan:
+		ln = frappe.db.get_value("Coop Loan", loan, ["member", "status", "balance"], as_dict=True)
+		if not ln or ln.member != member or ln.status != "Active":
+			frappe.throw(_("Choose one of the member's active loans"))
+		if amount > flt(ln.balance) + 0.005:
+			frappe.throw(_("That's more than the {0} left on the loan").format(_money(ln.balance, cooperative)))
+		doc = frappe.get_doc({"doctype": "Coop Loan Repayment", "loan": loan, "payment_date": payment_date, **common})
+		what = _("loan repayment")
+	else:
+		doc = frappe.get_doc({"doctype": "Coop Contribution", "contribution_date": payment_date, **common})
+		what = _("savings")
+	doc.insert(ignore_permissions=True)
+	approvals.request(
+		cooperative, "Offline payment", (doc.doctype, doc.name), amount=amount, beneficiary=member,
+		summary=_("{0} paid {1} by {2} ({3}), recorded by {4}").format(
+			m.full_name, _money(amount, cooperative), _(payment_method).lower(), what, me.full_name),
+	)
+	return {"doctype": doc.doctype, "name": doc.name, "status": doc.status}
+
+
+def on_offline_payment_decided(approval, approved, note=None):
+	doc = frappe.get_doc(approval.reference_doctype, approval.reference_name)
+	if doc.status != "Pending":
+		return
+	doc.status = "Confirmed" if approved else "Rejected"
+	doc.review_note = note
+	doc.reviewed_by = frappe.session.user
+	doc.flags.ignore_permissions = True
+	doc.save()
+	user = frappe.db.get_value("Coop Member", doc.member, "user")
+	amount = _money(doc.amount, doc.cooperative)
+	if approved:
+		what = _("towards your loan") if doc.doctype == "Coop Loan Repayment" else _("to your savings")
+		notify(user, _("{0} added {1}").format(amount, what), _("Your {0} payment was checked and recorded.").format(
+			_(doc.payment_method).lower()), link=f"/receipt/{doc.doctype}/{doc.name}", cooperative=doc.cooperative,
+			kind="payment")
+	if doc.recorded_by and doc.recorded_by != frappe.session.user:
+		notify(doc.recorded_by, _("The payment you recorded was {0}").format(_("approved") if approved else _("rejected")),
+			note or approval.summary, cooperative=doc.cooperative, kind="approval")
+
+
 # Transfers nobody could be matched to ------------------------------------------------------
 
 
@@ -584,7 +749,7 @@ def allocate_unmatched(reference, member):
 	tx = frappe.get_doc("Coop Payment Transaction", reference, for_update=True)
 	if tx.status != "Unmatched" or not tx.cooperative:
 		frappe.throw(_("This transfer has already been dealt with"))
-	me = get_membership(tx.cooperative, admin=True)
+	me = get_membership(tx.cooperative, capability="record")
 	ensure_not_self(me, member, _("Another admin or the treasurer has to add this to your own savings"))
 	m = frappe.db.get_value("Coop Member", member, ["name", "cooperative", "user", "full_name"], as_dict=True)
 	if not m or m.cooperative != tx.cooperative:
@@ -616,45 +781,85 @@ def allocate_unmatched(reference, member):
 
 @frappe.whitelist()
 def pending_reviews(cooperative):
-	"""Everything waiting on an admin or the treasurer, in one call."""
+	"""Everything waiting on the officers, in one call: approvals (marked with whether this officer
+	can decide them), approved money to send, transfers members say didn't arrive, and transfers to match."""
 	me = get_membership(cooperative, admin=True)
-	loans = _list("Coop Loan", cooperative, me, "all", "Pending", LOAN_FIELDS, 100, 0)
-	withdrawals = _list("Coop Withdrawal", cooperative, me, "all", "Pending", WITHDRAWAL_FIELDS, 100, 0)
 	payout_fields = ["payout_bank_name", "payout_account_number", "payout_account_name", "payout_changed_on"]
-	for row in loans + withdrawals:
-		row.payout_account = frappe.db.get_value("Coop Member", row.member, payout_fields, as_dict=True)
-		row.is_mine = row.member == me.name
-	for row in loans:
-		row.member_balances = member_balances(row.member, exclude_loan=row.name)
-	for row in withdrawals:
-		row.member_balances = member_balances(row.member, exclude_withdrawal=row.name)
-	disputed = frappe.get_all("Coop Loan", filters={"cooperative": cooperative, "status": "Sent", "receipt_disputed": 1},
-		fields=LOAN_FIELDS) + frappe.get_all("Coop Withdrawal",
-		filters={"cooperative": cooperative, "status": "Sent", "receipt_disputed": 1}, fields=WITHDRAWAL_FIELDS)
-	for row in disputed:
-		row.kind = "loan" if row.get("principal") is not None else "withdrawal"
-		row.is_mine = row.member == me.name
+	items = []
+	for a in approvals.pending(cooperative, me.user):
+		a["detail"] = _approval_detail(a, me, payout_fields)
+		items.append(a)
+
+	to_send, disputes = [], []
+	if can(me, "pay_out"):
+		loans = _list("Coop Loan", cooperative, me, "all", "Approved", LOAN_FIELDS, 100, 0)
+		withdrawals = _list("Coop Withdrawal", cooperative, me, "all", "Approved", WITHDRAWAL_FIELDS, 100, 0)
+		for row in loans:
+			row.kind = "loan"
+		for row in withdrawals:
+			row.kind = "withdrawal"
+		for row in loans + withdrawals:
+			row.payout_account = frappe.db.get_value("Coop Member", row.member, payout_fields, as_dict=True)
+			row.is_mine = row.member == me.name
+		to_send = loans + withdrawals
+		disputes = frappe.get_all("Coop Loan", filters={"cooperative": cooperative, "status": "Sent", "receipt_disputed": 1},
+			fields=LOAN_FIELDS) + frappe.get_all("Coop Withdrawal",
+			filters={"cooperative": cooperative, "status": "Sent", "receipt_disputed": 1}, fields=WITHDRAWAL_FIELDS)
+		for row in disputes:
+			row.kind = "loan" if row.get("principal") is not None else "withdrawal"
+			row.is_mine = row.member == me.name
+	unmatched = frappe.get_all(
+		"Coop Payment Transaction",
+		filters={"cooperative": cooperative, "status": "Unmatched"},
+		fields=["name", "amount", "currency", "creation", "message"],
+		order_by="creation asc",
+	) if can(me, "record") else []
 	return {
-		"members": frappe.get_all(
-			"Coop Member",
-			filters={"cooperative": cooperative, "status": "Pending"},
-			fields=["name", "full_name", "user", "phone", "creation"],
-			order_by="creation asc",
-		),
-		"loans": loans,
-		"withdrawals": withdrawals,
-		"disputes": disputed,
-		"unmatched": frappe.get_all(
-			"Coop Payment Transaction",
-			filters={"cooperative": cooperative, "status": "Unmatched"},
-			fields=["name", "amount", "currency", "creation", "message"],
-			order_by="creation asc",
-		),
+		"approvals": items,
+		"to_send": to_send,
+		"disputes": disputes,
+		"unmatched": unmatched,
+		# Kept for older clients: join requests waiting
+		"members": [a["detail"] for a in items if a["action"] == "Member admission"],
 		"awaiting_members": frappe.get_all(
 			"Coop Contribution",
 			filters={"cooperative": cooperative, "status": "Pending", "payment_method": "Opening Balance"},
 			fields=["name", "member", "member_name", "amount", "contribution_date"],
 		),
 		"pool": cooperative_totals(cooperative),
+		"capabilities": me.capabilities,
 		"now": now_datetime(),
 	}
+
+
+def _approval_detail(a, me, payout_fields):
+	"""What an officer needs to decide an approval, by kind."""
+	dt, dn = a["reference_doctype"], a["reference_name"]
+	if a["action"] == "Member admission":
+		return frappe.db.get_value("Coop Member", dn, ["name", "full_name", "user", "phone", "creation"], as_dict=True)
+	if a["action"] in ("Loan", "Withdrawal"):
+		fields = LOAN_FIELDS if a["action"] == "Loan" else WITHDRAWAL_FIELDS
+		row = frappe.db.get_value(dt, dn, fields, as_dict=True)
+		row.payout_account = frappe.db.get_value("Coop Member", row.member, payout_fields, as_dict=True)
+		row.is_mine = row.member == me.name
+		row.member_balances = member_balances(row.member, **({"exclude_loan": dn} if a["action"] == "Loan"
+			else {"exclude_withdrawal": dn}))
+		return row
+	if a["action"] == "Offline payment":
+		date_field = "payment_date" if dt == "Coop Loan Repayment" else "contribution_date"
+		row = frappe.db.get_value(dt, dn, ["name", "member", "member_name", "amount", "payment_method", "reference",
+			"notes", "recorded_by", date_field], as_dict=True)
+		row.date = row.get(date_field)
+		row.loan = frappe.db.get_value(dt, dn, "loan") if dt == "Coop Loan Repayment" else None
+		row.recorded_by_name = frappe.db.get_value("User", row.recorded_by, "full_name")
+		return row
+	if a["action"] == "Manual journal":
+		je = frappe.get_doc(dt, dn)
+		names = dict(frappe.get_all("Coop Account", filters={"cooperative": je.cooperative}, fields=["name", "account_name"],
+			as_list=True))
+		return {"name": je.name, "remarks": je.remarks, "posting_date": je.posting_date, "total": je.total_debit,
+			"lines": [{"account_name": names.get(l.account), "debit": l.debit, "credit": l.credit} for l in je.lines]}
+	if a["action"] == "Share-out":
+		return frappe.db.get_value(dt, dn, ["name", "period_start", "period_end", "surplus", "reserve_amount", "to_members",
+			"basis"], as_dict=True)
+	return None

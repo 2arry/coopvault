@@ -1,0 +1,181 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "APR-.YYYY.-.#####",
+ "creation": "2026-10-21 18:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "cooperative",
+  "action",
+  "status",
+  "summary",
+  "amount",
+  "cb1",
+  "reference_doctype",
+  "reference_name",
+  "requested_by",
+  "beneficiary",
+  "current_stage",
+  "completed_on",
+  "steps_section",
+  "steps"
+ ],
+ "fields": [
+  {
+   "default": "APR-.YYYY.-.#####",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Naming Series",
+   "options": "APR-.YYYY.-.#####"
+  },
+  {
+   "fieldname": "cooperative",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Cooperative",
+   "options": "Cooperative",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Action",
+   "options": "Member admission\nLoan\nWithdrawal\nOffline payment\nManual journal\nShare-out",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nApproved\nRejected\nCancelled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "label": "Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Reference Doctype",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Reference Name",
+   "options": "reference_doctype",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "description": "Who benefits: they can't approve it",
+   "fieldname": "beneficiary",
+   "fieldtype": "Link",
+   "label": "Beneficiary",
+   "options": "Coop Member",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "current_stage",
+   "fieldtype": "Int",
+   "label": "Current Stage",
+   "read_only": 1
+  },
+  {
+   "fieldname": "completed_on",
+   "fieldtype": "Datetime",
+   "label": "Completed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "steps_section",
+   "fieldtype": "Section Break",
+   "label": "Stages"
+  },
+  {
+   "fieldname": "steps",
+   "fieldtype": "Table",
+   "label": "Steps",
+   "options": "Coop Approval Step",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-21 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CoopVault",
+ "name": "Coop Approval",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Coop Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "action,reference_name,summary",
+ "show_title_field_in_link": 1,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "summary",
+ "track_changes": 1
+}

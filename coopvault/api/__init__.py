@@ -3,20 +3,60 @@
 All endpoints check cooperative membership / roles explicitly and then work with
 ignore_permissions, so regular members never need desk access.
 
-Roles inside a cooperative:
-- Admin: runs the group (members, roles, rules, bank account, password resets) and can do
-  everything a Treasurer can.
-- Treasurer: handles money (approves join requests, sends loans and withdrawals, proposes
-  opening balances, posts announcements). Can't change roles or settings.
+Roles inside a cooperative (one per member):
+- Admin: sets the group up (rules, bank account, roles, approval rules, password resets) and can
+  do everything below.
+- Chairman: oversight; signs off big approvals; reads the books.
+- Accountant: the books (journals, closing, share-out), records offline payments.
+- Treasurer: moves money (sends approved loans and withdrawals), records offline payments.
+- Loan Officer: reviews loan applications and follows up arrears.
 - Member: their own savings, loans and withdrawals.
-Nobody can approve or send money to themselves.
+Approvals follow each cooperative's rules (see coopvault/approvals.py). Nobody approves their own
+request, anything that benefits them, or two stages of the same request.
 """
 
 import frappe
-from frappe import _
+from frappe import _, _lt
 
-STAFF_ROLES = ("Admin", "Treasurer")
+ROLES = ("Member", "Treasurer", "Accountant", "Loan Officer", "Chairman", "Admin")
+STAFF_ROLES = ROLES[1:]
 SUPER_ROLES = ("System Manager", "Coop Manager")
+
+# What each role can do (Admins can do everything)
+CAPABILITIES = {
+	"settings": ("Admin",),
+	"reset": ("Admin",),
+	"members": ("Admin", "Chairman", "Treasurer", "Accountant", "Loan Officer"),
+	"suspend": ("Admin", "Chairman"),
+	"pay_out": ("Admin", "Treasurer"),
+	"record": ("Admin", "Treasurer", "Accountant"),
+	"books": ("Admin", "Chairman", "Accountant", "Treasurer"),
+	"journal": ("Admin", "Accountant", "Treasurer"),
+	"close": ("Admin", "Accountant"),
+	"loans": ("Admin", "Chairman", "Treasurer", "Loan Officer"),
+	"announce": ("Admin", "Chairman", "Treasurer"),
+	"opening": ("Admin", "Treasurer", "Accountant"),
+}
+DENIED = {
+	"settings": _lt("Only the cooperative's admins can do this"),
+	"reset": _lt("Only the cooperative's admins can create reset codes"),
+	"suspend": _lt("Only an admin or the chairman can suspend or reinstate members"),
+	"pay_out": _lt("Only the treasurer or an admin sends money"),
+	"record": _lt("Only the treasurer, accountant or an admin records payments"),
+	"books": _lt("Only the cooperative's officers can see the books"),
+	"journal": _lt("Only the accountant, treasurer or an admin prepares journal entries"),
+	"close": _lt("Only the accountant or an admin can close the books or prepare a share-out"),
+}
+
+
+def can(me, capability):
+	return bool(me.get("is_super")) or (me.get("status") == "Active" and me.get("role") in CAPABILITIES[capability])
+
+
+def require(me, capability):
+	if not can(me, capability):
+		frappe.throw(str(DENIED.get(capability, _("You don't have permission to do this"))), frappe.PermissionError)
+	return me
 
 
 def require_login():
@@ -30,10 +70,11 @@ def is_super_user(user=None):
 	return user == "Administrator" or bool(set(frappe.get_roles(user)) & set(SUPER_ROLES))
 
 
-def get_membership(cooperative, user=None, admin=False, owner=False, allow_inactive=False):
+def get_membership(cooperative, user=None, admin=False, owner=False, allow_inactive=False, capability=None):
 	"""Return the current user's Coop Member row for a cooperative, enforcing access.
 
-	admin=True requires Admin or Treasurer ("staff"); owner=True requires Admin.
+	admin=True requires any officer role ("staff"); owner=True requires Admin; capability=... requires
+	a role that has it (see CAPABILITIES).
 	Super users get a synthetic Admin membership for cooperatives they do not belong to.
 	"""
 	user = user or require_login()
@@ -49,7 +90,7 @@ def get_membership(cooperative, user=None, admin=False, owner=False, allow_inact
 	if not member and is_super_user(user):
 		return frappe._dict(
 			name=None, cooperative=cooperative, user=user, role="Admin", status="Active", is_super=True,
-			is_admin=True, is_owner=True,
+			is_admin=True, is_owner=True, capabilities=list(CAPABILITIES),
 		)
 	if not member:
 		frappe.throw(_("You are not a member of this cooperative"), frappe.PermissionError)
@@ -59,10 +100,14 @@ def get_membership(cooperative, user=None, admin=False, owner=False, allow_inact
 	active = member.status == "Active"
 	member.is_admin = active and (member.role in STAFF_ROLES or super_user)
 	member.is_owner = active and (member.role == "Admin" or super_user)
+	member.is_super = super_user
 	if owner and not member.is_owner:
 		frappe.throw(_("Only the cooperative's admins can do this"), frappe.PermissionError)
 	if admin and not member.is_admin:
-		frappe.throw(_("Only the cooperative's admins or treasurer can do this"), frappe.PermissionError)
+		frappe.throw(_("Only the cooperative's officers can do this"), frappe.PermissionError)
+	if capability:
+		require(member, capability)
+	member.capabilities = [c for c in CAPABILITIES if can(member, c)]
 	return member
 
 

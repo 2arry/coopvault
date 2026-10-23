@@ -14,6 +14,7 @@
   "phone",
   "cb1",
   "role",
+  "member_number",
   "status",
   "joined_on",
   "security_hold_until",
@@ -95,7 +96,15 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Role",
-   "options": "Member\nTreasurer\nAdmin"
+   "options": "Member\nTreasurer\nAccountant\nLoan Officer\nChairman\nAdmin"
+  },
+  {
+   "description": "Given when the membership is approved",
+   "fieldname": "member_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Member No.",
+   "read_only": 1
   },
   {
    "default": "Pending",
@@ -321,7 +330,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 07:45:54.409206",
+ "modified": "2026-10-21 08:24:02.956776",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Member",

@@ -29,8 +29,10 @@ class Cooperative(Document):
 
 	def after_insert(self):
 		from coopvault.accounting import ensure_chart
+		from coopvault.approvals import ensure_default_rules
 
 		ensure_chart(self.name)
+		ensure_default_rules(self.name)
 
 	def validate(self):
 		if not 0 <= flt(self.loan_multiplier) <= 1:

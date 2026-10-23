@@ -1,0 +1,84 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-21 18:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "stage_no",
+  "label",
+  "roles",
+  "status",
+  "decided_by",
+  "decided_on",
+  "note",
+  "fallback"
+ ],
+ "fields": [
+  {
+   "fieldname": "stage_no",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Stage No"
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label"
+  },
+  {
+   "fieldname": "roles",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Roles"
+  },
+  {
+   "default": "Waiting",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Waiting\nApproved\nRejected\nSkipped"
+  },
+  {
+   "fieldname": "decided_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Decided By",
+   "options": "User"
+  },
+  {
+   "fieldname": "decided_on",
+   "fieldtype": "Datetime",
+   "label": "Decided On"
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note"
+  },
+  {
+   "description": "Nobody else holds the roles for this stage, so an Admin approves it",
+   "fieldname": "fallback",
+   "fieldtype": "Check",
+   "label": "Admin Covering"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-21 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CoopVault",
+ "name": "Coop Approval Step",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

@@ -25,7 +25,8 @@
   "notes",
   "reviewed_by",
   "reviewed_on",
-  "review_note"
+  "review_note",
+  "recorded_by"
  ],
  "fields": [
   {
@@ -148,11 +149,19 @@
    "fieldname": "review_note",
    "fieldtype": "Small Text",
    "label": "Review Note"
+  },
+  {
+   "description": "Staff member who entered an offline payment; another one approves it",
+   "fieldname": "recorded_by",
+   "fieldtype": "Link",
+   "label": "Recorded By",
+   "options": "User",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-21 18:00:00.000000",
+ "modified": "2026-10-21 08:24:02.959119",
  "modified_by": "Administrator",
  "module": "CoopVault",
  "name": "Coop Contribution",

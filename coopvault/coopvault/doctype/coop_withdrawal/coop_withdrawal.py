@@ -11,7 +11,8 @@ from coopvault.ledger import cooperative_totals, member_balances, refresh_all
 from coopvault.utils import money_text
 
 TRANSITIONS = {
-	"Pending": {"Sent", "Rejected", "Cancelled"},
+	"Pending": {"Approved", "Rejected", "Cancelled"},
+	"Approved": {"Sent", "Rejected", "Cancelled"},
 	"Sent": {"Completed"},
 }
 
@@ -29,7 +30,7 @@ class CoopWithdrawal(Document):
 		if previous and previous != self.status and self.status not in TRANSITIONS.get(previous, ()):
 			frappe.throw(_("A {0} withdrawal can't be changed to {1}").format(_(previous).lower(), _(self.status).lower()))
 
-		if self.is_new() or (self.status == "Sent" and previous == "Pending"):
+		if self.is_new() or (self.status in ("Approved", "Sent") and previous in ("Pending", "Approved")):
 			b = member_balances(self.member, exclude_withdrawal=None if self.is_new() else self.name)
 			if flt(self.amount) > b.withdrawable + 0.005:
 				frappe.throw(
@@ -37,7 +38,7 @@ class CoopWithdrawal(Document):
 						money_text(b.withdrawable, currency)
 					)
 				)
-		if self.status == "Sent" and previous == "Pending":
+		if self.status == "Sent" and previous == "Approved":
 			pool = cooperative_totals(self.cooperative, exclude_withdrawal=self.name).pool_balance
 			if flt(self.amount) > pool + 0.005:
 				frappe.throw(_("The pool only has {0} right now").format(money_text(pool, currency)))

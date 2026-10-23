@@ -1,8 +1,8 @@
 """The books: chart of accounts, journals, financial reports, closing and the year-end share-out.
 
-Staff (Admins and the Treasurer) read the books. Manual journals are prepared by one staff member
-and only count once a different one approves them. Closing the books and approving a share-out
-are for Admins, and the person who prepared a share-out can't approve it.
+Officers with the "books" capability read them (Admin, Chairman, Accountant, Treasurer). Manual
+journals and share-outs go through the cooperative's approval rules (coopvault/approvals.py), so
+whoever prepares one can't approve it. The Accountant or an Admin closes the books.
 """
 
 import json
@@ -11,19 +11,19 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, add_months, cint, flt, formatdate, getdate, now_datetime, today
 
-from coopvault import accounting
+from coopvault import accounting, approvals
 from coopvault.accounting import CASH_TYPES, DEBIT_NORMAL
 from coopvault.api import get_membership
 from coopvault.ledger import refresh_all
-from coopvault.notify import members_of, notify
+from coopvault.notify import notify
 from coopvault.utils import money_text
 
 MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
 	"November", "December"]
 
 
-def _staff(cooperative):
-	return get_membership(cooperative, admin=True)
+def _staff(cooperative, capability="books"):
+	return get_membership(cooperative, capability=capability)
 
 
 def _currency(cooperative):
@@ -106,7 +106,7 @@ def chart(cooperative, as_of=None):
 @frappe.whitelist(methods=["POST"])
 def save_account(cooperative, account_name, root_type=None, account_code=None, account_type=None, description=None,
 		name=None, disabled=0):
-	get_membership(cooperative, owner=True)
+	_staff(cooperative, "close")
 	if name:
 		doc = frappe.get_doc("Coop Account", name)
 		if doc.cooperative != cooperative:
@@ -188,7 +188,8 @@ def get_journal(name):
 		for l in je.lines
 	]
 	data["currency"] = _currency(je.cooperative)
-	data["can_approve"] = je.status == "Draft" and je.prepared_by != frappe.session.user
+	data["approval"] = approvals.for_reference("Coop Journal Entry", je.name)
+	data["can_approve"] = bool(data["approval"] and data["approval"]["can_decide"])
 	return data
 
 
@@ -203,61 +204,49 @@ def _lines(lines):
 
 @frappe.whitelist(methods=["POST"])
 def create_journal(cooperative, posting_date, remarks, lines):
-	"""A manual journal (e.g. bank charges, an expense, a correction). It waits as a draft until a
-	different staff member approves it."""
-	me = _staff(cooperative)
+	"""A manual journal (e.g. bank charges, an expense, a correction). It waits as a draft until it
+	passes the group's approval rule; whoever prepared it can't approve it."""
+	_staff(cooperative, "journal")
 	if not (remarks or "").strip():
 		frappe.throw(_("Say what this entry is for"))
 	doc = accounting.make_entry(cooperative, "Manual Journal", _lines(lines), posting_date=posting_date,
 		remarks=remarks.strip(), status="Draft", system=False)
 	if not doc:
 		frappe.throw(_("Enter at least one debit and one credit"))
-	notify([u for u in _staff_users(cooperative) if u != me.user], _("A journal entry needs approval"),
-		_("{0}: {1}").format(me.full_name, remarks.strip()), link=f"/admin/books/journal/{doc.name}",
-		cooperative=cooperative, kind="journal-approval")
+	members = {l.member for l in doc.lines if l.member}
+	approvals.request(cooperative, "Manual journal", ("Coop Journal Entry", doc.name), amount=doc.total_debit,
+		beneficiary=members.pop() if len(members) == 1 else None,
+		summary=_("Journal: {0} ({1})").format(remarks.strip(), money_text(doc.total_debit, _currency(cooperative))))
 	return get_journal(doc.name)
-
-
-def _staff_users(cooperative):
-	from coopvault.notify import staff_of
-
-	return staff_of(cooperative)
 
 
 @frappe.whitelist(methods=["POST"])
 def approve_journal(name):
-	je = frappe.get_doc("Coop Journal Entry", name)
-	_staff(je.cooperative)
-	if je.status != "Draft":
-		frappe.throw(_("Only draft entries wait for approval"))
-	if je.prepared_by == frappe.session.user:
-		frappe.throw(_("Someone other than the person who prepared it has to approve it"), frappe.PermissionError)
-	je.status = "Posted"
-	je.approved_by = frappe.session.user
-	je.approved_on = now_datetime()
-	je.flags.ignore_permissions = True
-	je.save()
-	_refresh_members(je)
-	notify(je.prepared_by, _("Your journal entry {0} was approved").format(je.name), link=f"/admin/books/journal/{je.name}",
-		cooperative=je.cooperative, kind="journal-approval")
+	approvals.decide_for("Coop Journal Entry", name, True)
 	return get_journal(name)
 
 
 @frappe.whitelist(methods=["POST"])
 def reject_journal(name, note=None):
-	je = frappe.get_doc("Coop Journal Entry", name)
-	_staff(je.cooperative)
+	approvals.decide_for("Coop Journal Entry", name, False, note)
+	return get_journal(name)
+
+
+def on_journal_decided(approval, approved, note=None):
+	je = frappe.get_doc("Coop Journal Entry", approval.reference_name)
 	if je.status != "Draft":
-		frappe.throw(_("Only draft entries can be rejected"))
-	je.status = "Rejected"
+		return
+	je.status = "Posted" if approved else "Rejected"
 	je.approved_by = frappe.session.user
 	je.approved_on = now_datetime()
-	je.reversal_reason = note
+	if not approved:
+		je.reversal_reason = note
 	je.flags.ignore_permissions = True
 	je.save()
-	notify(je.prepared_by, _("Your journal entry {0} was rejected").format(je.name), note,
-		link=f"/admin/books/journal/{je.name}", cooperative=je.cooperative, kind="journal-approval")
-	return get_journal(name)
+	if approved:
+		_refresh_members(je)
+	notify(je.prepared_by, _("Your journal entry {0} was {1}").format(je.name, _("approved") if approved else _("rejected")),
+		note, link=f"/admin/books/journal/{je.name}", cooperative=je.cooperative, kind="journal-approval")
 
 
 @frappe.whitelist(methods=["POST"])
@@ -265,7 +254,7 @@ def reverse_journal(name, reason):
 	"""Undo a manual journal. Automatic entries are undone by reversing the payment, loan or
 	withdrawal that made them, so the documents and the books stay in step."""
 	je = frappe.get_doc("Coop Journal Entry", name)
-	_staff(je.cooperative)
+	_staff(je.cooperative, "journal")
 	if je.voucher_type != "Manual Journal":
 		frappe.throw(_("Only manual journals can be reversed here"))
 	if not (reason or "").strip():
@@ -436,7 +425,7 @@ def general_ledger(cooperative, account, from_date=None, to_date=None):
 @frappe.whitelist(methods=["POST"])
 def close_books(cooperative, until):
 	"""Stop anything being posted on or before a date (for example after the accounts are audited)."""
-	get_membership(cooperative, owner=True)
+	_staff(cooperative, "close")
 	until = getdate(until)
 	if until >= getdate(today()):
 		frappe.throw(_("You can only close days that have ended. Choose yesterday or earlier."))
@@ -556,7 +545,7 @@ def preview_share_out(cooperative, period_end, reserve_percent=None, member_perc
 
 @frappe.whitelist(methods=["POST"])
 def create_share_out(cooperative, period_end, reserve_percent=None, member_percent=100, basis="Average savings", note=None):
-	me = _staff(cooperative)
+	me = _staff(cooperative, "close")
 	if frappe.db.exists("Coop Share Out", {"cooperative": cooperative, "status": "Draft"}):
 		frappe.throw(_("There's already a share-out waiting for approval"))
 	if frappe.db.exists("Coop Journal Entry", {"cooperative": cooperative, "status": "Draft",
@@ -566,10 +555,9 @@ def create_share_out(cooperative, period_end, reserve_percent=None, member_perce
 	doc = frappe.get_doc({"doctype": "Coop Share Out", **{k: v for k, v in result.items() if k != "currency"},
 		"status": "Draft", "prepared_by": frappe.session.user, "note": note})
 	doc.insert(ignore_permissions=True)
-	approvers = [u for u in members_of(cooperative, roles=("Admin",)) if u != me.user]
-	notify(approvers, _("A year-end share-out needs approval"),
-		_("{0} prepared it: {1} to members.").format(me.full_name, money_text(doc.to_members, result.currency)),
-		link=f"/admin/books/share-out/{doc.name}", cooperative=cooperative, kind="share-out")
+	approvals.request(cooperative, "Share-out", ("Coop Share Out", doc.name), amount=doc.to_members,
+		summary=_("Year-end share-out prepared by {0}: {1} to members").format(me.full_name,
+			money_text(doc.to_members, result.currency)))
 	return get_share_out(doc.name)
 
 
@@ -584,7 +572,8 @@ def get_share_out(name):
 	data["currency"] = _currency(doc.cooperative)
 	data["prepared_by_name"] = frappe.db.get_value("User", doc.prepared_by, "full_name")
 	data["approved_by_name"] = doc.approved_by and frappe.db.get_value("User", doc.approved_by, "full_name")
-	data["can_approve"] = doc.status == "Draft" and me.is_owner and doc.prepared_by != frappe.session.user
+	data["approval"] = approvals.for_reference("Coop Share Out", doc.name) if me.is_admin else None
+	data["can_approve"] = bool(data["approval"] and data["approval"]["can_decide"])
 	return data
 
 
@@ -599,24 +588,42 @@ def share_outs(cooperative):
 @frappe.whitelist(methods=["POST"])
 def cancel_share_out(name):
 	doc = frappe.get_doc("Coop Share Out", name)
-	_staff(doc.cooperative)
+	_staff(doc.cooperative, "close")
 	if doc.status != "Draft":
 		frappe.throw(_("Only a share-out waiting for approval can be cancelled"))
 	doc.db_set("status", "Cancelled")
+	approvals.cancel("Coop Share Out", doc.name)
 	return {"ok": True}
 
 
 @frappe.whitelist(methods=["POST"])
 def approve_share_out(name):
+	approvals.decide_for("Coop Share Out", name, True)
+	return get_share_out(name)
+
+
+@frappe.whitelist(methods=["POST"])
+def reject_share_out(name, note=None):
+	approvals.decide_for("Coop Share Out", name, False, note)
+	return get_share_out(name)
+
+
+def on_share_out_decided(approval, approved, note=None):
+	doc = frappe.get_doc("Coop Share Out", approval.reference_name, for_update=True)
+	if doc.status != "Draft":
+		return
+	if not approved:
+		doc.db_set({"status": "Cancelled", "note": note or doc.note})
+		notify(doc.prepared_by, _("The share-out you prepared was rejected"), note, cooperative=doc.cooperative,
+			kind="share-out")
+		return
+	_post_share_out(doc)
+
+
+def _post_share_out(doc):
 	"""Post the share-out: close the year's income and costs into retained surplus, move the
 	reserve into the reserve fund, credit each member's savings with their share, and close the
 	books up to the end of the period."""
-	doc = frappe.get_doc("Coop Share Out", name, for_update=True)
-	me = get_membership(doc.cooperative, owner=True)
-	if doc.status != "Draft":
-		frappe.throw(_("This share-out has already been dealt with"))
-	if doc.prepared_by == frappe.session.user:
-		frappe.throw(_("Another admin has to approve the share-out you prepared"), frappe.PermissionError)
 	fresh = compute_share_out(doc.cooperative, doc.period_end, doc.reserve_percent, doc.member_percent, doc.basis)
 	if abs(fresh.surplus - flt(doc.surplus)) >= 0.01 or abs(fresh.to_members - flt(doc.to_members)) >= 0.01:
 		frappe.throw(_("The figures changed since this was prepared. Cancel it and prepare it again."))
@@ -654,4 +661,3 @@ def approve_share_out(name):
 		"The surplus up to {0} was {1}. {2} went to the reserve fund and {3} was shared among members in proportion to {4}."
 	).format(formatdate(doc.period_end, "d MMM yyyy"), money_text(doc.surplus, currency), money_text(doc.reserve_amount, currency),
 		money_text(doc.to_members, currency), _(doc.basis).lower()))
-	return get_share_out(name)

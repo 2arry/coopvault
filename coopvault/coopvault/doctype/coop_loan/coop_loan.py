@@ -12,7 +12,8 @@ from coopvault.utils import money_text
 
 # Allowed status changes. Sent = money transferred, waiting for the borrower to confirm it arrived.
 TRANSITIONS = {
-	"Pending": {"Sent", "Rejected", "Cancelled"},
+	"Pending": {"Approved", "Rejected", "Cancelled"},
+	"Approved": {"Sent", "Rejected", "Cancelled"},
 	"Sent": {"Active"},
 	"Active": {"Repaid"},
 	"Repaid": {"Active"},
@@ -43,9 +44,9 @@ class CoopLoan(Document):
 			self.interest_amount = flt(self.principal) * flt(self.interest_rate) / 100
 			self.total_payable = flt(self.principal) + flt(self.interest_amount)
 
-		if self.status in ("Pending", "Sent") and previous in (None, "Pending"):
+		if self.status in ("Pending", "Approved", "Sent") and previous in (None, "Pending", "Approved"):
 			self.check_borrow_limit(coop)
-		if self.status == "Sent" and previous == "Pending":
+		if self.status == "Sent" and previous == "Approved":
 			self.send(coop)
 		if self.status == "Active" and previous == "Sent":
 			self.received_on = self.received_on or today()

@@ -1,0 +1,97 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-10-21 18:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "cooperative",
+  "action",
+  "min_amount",
+  "enabled",
+  "stages"
+ ],
+ "fields": [
+  {
+   "fieldname": "cooperative",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Cooperative",
+   "options": "Cooperative",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Action",
+   "options": "Member admission\nLoan\nWithdrawal\nOffline payment\nManual journal\nShare-out",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "The rule with the highest amount at or below the request's amount is used",
+   "fieldname": "min_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Applies From Amount"
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "stages",
+   "fieldtype": "Table",
+   "label": "Stages",
+   "options": "Coop Approval Rule Stage",
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-21 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CoopVault",
+ "name": "Coop Approval Rule",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Coop Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "action",
+ "track_changes": 1
+}

@@ -11,9 +11,9 @@ import json
 import frappe
 from frappe import _
 
-DISCREET_TITLE = "Cooperative360"
+from coopvault.api import CAPABILITIES, STAFF_ROLES
 
-STAFF_ROLES = ("Admin", "Treasurer")
+DISCREET_TITLE = "Cooperative360"
 
 
 def members_of(cooperative, roles=None, exclude_users=()):
@@ -26,6 +26,11 @@ def members_of(cooperative, roles=None, exclude_users=()):
 
 def staff_of(cooperative, exclude_users=()):
 	return members_of(cooperative, STAFF_ROLES, exclude_users)
+
+
+def holders(cooperative, capability, exclude_users=()):
+	"""Active members whose role has a capability (see api.CAPABILITIES), e.g. who can send money."""
+	return members_of(cooperative, CAPABILITIES[capability], exclude_users)
 
 
 def notify(users, title, body=None, link=None, cooperative=None, kind=None, push=True):

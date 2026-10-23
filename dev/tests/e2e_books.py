@@ -50,7 +50,7 @@ j = call("accounts.create_journal", A, cooperative=CO, posting_date=date.today()
 	lines=[{"account": acct["Bank Charges"], "debit": 50}, {"account": acct["Bank"], "credit": 50}])
 check("manual journal waits as a draft", j["status"] == "Draft")
 cash_before = get("accounts.summary", A, cooperative=CO)["cash_total"]
-rejected("you can't approve your own journal", "accounts.approve_journal", A, name=j["name"], contains="other than")
+rejected("you can't approve your own journal", "accounts.approve_journal", A, name=j["name"], contains="someone else")
 rejected("unbalanced journal refused", "accounts.create_journal", A, cooperative=CO, posting_date=date.today().isoformat(),
 	remarks="Bad", lines=[{"account": acct["Bank Charges"], "debit": 50}, {"account": acct["Bank"], "credit": 40}], contains="equal")
 j = call("accounts.approve_journal", T, name=j["name"])
@@ -120,11 +120,15 @@ p = get("accounts.preview_share_out", T, cooperative=CO, period_end=yesterday, r
 check("surplus = interest less fees", abs(p["surplus"] - (p["income"] - p["expenses"])) < 0.01 and p["surplus"] > 0, p)
 check("reserve is 25% of the surplus", abs(p["reserve_amount"] - round(p["surplus"] * 0.25, 2)) < 0.01)
 check("members share the rest", abs(p["to_members"] + p["retained"] - (p["surplus"] - p["reserve_amount"])) < 0.01 and p["to_members"] > 0)
-so = call("accounts.create_share_out", T, cooperative=CO, period_end=yesterday, reserve_percent=25, member_percent=100,
+rejected("treasurer can't prepare a share-out", "accounts.create_share_out", T, cooperative=CO, period_end=yesterday,
+	contains="accountant or an admin")
+so = call("accounts.create_share_out", A, cooperative=CO, period_end=yesterday, reserve_percent=25, member_percent=100,
 	basis="Savings at year end")
 rejected("treasurer can't approve a share-out", "accounts.approve_share_out", T, name=so["name"])
+rejected("whoever prepared it can't approve it", "accounts.approve_share_out", A, name=so["name"], contains="someone else")
+call("coop.update_member", A, member=ids[N], role="Chairman")
 mine_before = get("coop.get_statement", M, cooperative=CO)["balances"]["savings"]
-so = call("accounts.approve_share_out", A, name=so["name"])
+so = call("accounts.approve_share_out", N, name=so["name"])
 check("share-out posted", so["status"] == "Posted" and so["journal_entry"])
 my_line = next(l for l in so["lines"] if l["member"] == ids[M])
 st = get("coop.get_statement", M, cooperative=CO)

@@ -3,3 +3,4 @@
 [post_model_sync]
 coopvault.patches.v2_0.security_and_payments_model
 coopvault.patches.v3_0.books
+coopvault.patches.v3_0.approvals

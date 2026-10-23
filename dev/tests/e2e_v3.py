@@ -192,8 +192,10 @@ for tok in (A, T):
 
 # --- Loans: sent with a reference, confirmed by the borrower ---------------------------
 loan = call("finance.apply_loan", B, cooperative=CO, amount=20000, tenure_months=2, purpose="Stock")
-rejected("send needs a transfer reference", "finance.review_loan", A, name=loan["name"], action="approve", contains="reference")
-L = call("finance.review_loan", A, name=loan["name"], action="approve", transfer_reference="GTB-778899")
+L = call("finance.review_loan", A, name=loan["name"], action="approve")
+check("approving without sending leaves it approved", L["status"] == "Approved", L["status"])
+rejected("send needs a transfer reference", "finance.send_loan", A, name=loan["name"], transfer_reference="", contains="reference")
+L = call("finance.send_loan", A, name=loan["name"], transfer_reference="GTB-778899")
 check("loan is Sent, schedule not started", L["status"] == "Sent" and not L["schedule"], L["status"])
 check("payout account snapshot on the loan", L["payout_account_number"] == "0987654321")
 pool_after_send = call("coop.get_dashboard", B, "GET", cooperative=CO)["pool"]["pool_balance"]

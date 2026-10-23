@@ -10,7 +10,7 @@ from frappe.utils import add_days, add_months, cint, flt, getdate, today
 
 from coopvault import accounting
 
-OPEN_LOAN_STATES = ("Pending", "Sent", "Active")
+OPEN_LOAN_STATES = ("Pending", "Approved", "Sent", "Active")
 MONEY_OUT_LOAN_STATES = ("Sent", "Active", "Repaid")
 OWED_LOAN_STATES = ("Sent", "Active")
 WITHDRAWN_STATES = ("Sent", "Completed")
@@ -39,14 +39,14 @@ def member_balances(member, exclude_loan=None, exclude_withdrawal=None):
 	if exclude_withdrawal:
 		withdrawal_filters["name"] = ["!=", exclude_withdrawal]
 	withdrawn = _sum("Coop Withdrawal", "amount", {**withdrawal_filters, "status": ["in", WITHDRAWN_STATES]})
-	withdrawal_requested = _sum("Coop Withdrawal", "amount", {**withdrawal_filters, "status": "Pending"})
+	withdrawal_requested = _sum("Coop Withdrawal", "amount", {**withdrawal_filters, "status": ["in", ["Pending", "Approved"]]})
 
 	loan_filters = {"member": member, "status": ["in", OPEN_LOAN_STATES]}
 	if exclude_loan:
 		loan_filters["name"] = ["!=", exclude_loan]
 	loans = frappe.get_all("Coop Loan", filters=loan_filters, fields=["status", "principal", "balance"])
 	outstanding = sum(flt(l.balance) for l in loans if l.status in OWED_LOAN_STATES)
-	pending = sum(flt(l.principal) for l in loans if l.status == "Pending")
+	pending = sum(flt(l.principal) for l in loans if l.status in ("Pending", "Approved"))
 	exposure = outstanding + pending
 	# What the group owes the member, from the books: contributions, less withdrawals, plus any
 	# surplus shared out to them

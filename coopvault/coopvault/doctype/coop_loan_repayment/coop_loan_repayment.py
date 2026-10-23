@@ -27,7 +27,7 @@ class CoopLoanRepayment(Document):
 			loan.member_name,
 			loan.user,
 		)
-		if self.is_new() and self.status == "Confirmed":
+		if self.status == "Confirmed" and (self.is_new() or self.has_value_changed("status")):
 			if loan.status != "Active":
 				frappe.throw(_("Repayments can only be made against an active loan"))
 			if flt(self.amount) > flt(loan.balance) + 0.005:
