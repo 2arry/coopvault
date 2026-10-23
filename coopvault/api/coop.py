@@ -496,7 +496,7 @@ def list_members(cooperative, status=None):
 	elif status:
 		filters["status"] = status
 
-	fields = ["name", "full_name", "role", "status", "joined_on"]
+	fields = ["name", "full_name", "role", "status", "joined_on", "member_number"]
 	if membership.is_admin:
 		fields += ["user", "phone", "total_contributed", "loan_outstanding", "borrow_limit", "creation",
 			"payout_changed_on"]
@@ -690,9 +690,11 @@ def get_statement(cooperative, member=None, limit=None):
 	entries = []
 	for c in frappe.get_all(
 		"Coop Contribution",
-		filters={"member": member, "status": ["!=", "Pending"]},
+		filters={"member": member},
 		fields=["name", "amount", "contribution_date", "status", "payment_method", "creation"],
 	):
+		if c.status == "Pending" and c.payment_method == "Opening Balance":
+			continue  # shown as a card to confirm instead
 		entries.append(dict(doctype="Coop Contribution", name=c.name, type="Contribution", date=c.contribution_date,
 			amount=c.amount, direction="in", status=c.status, method=c.payment_method, creation=c.creation))
 	for loan in frappe.get_all(
@@ -735,7 +737,7 @@ def get_statement(cooperative, member=None, limit=None):
 		"Coop Member",
 		member,
 		["name", "full_name", "phone", "role", "status", "joined_on", "payout_bank_name", "payout_account_number",
-			"payout_account_name", "payout_changed_on", "security_hold_until", "phone_changed_on"],
+			"payout_account_name", "payout_changed_on", "security_hold_until", "phone_changed_on", "member_number"],
 		as_dict=True,
 	)
 	balances = member_balances(member)

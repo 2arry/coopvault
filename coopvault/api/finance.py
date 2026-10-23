@@ -201,6 +201,7 @@ def get_loan(name):
 			"Coop Member", loan.member,
 			["payout_bank_name", "payout_account_number", "payout_account_name", "payout_changed_on"], as_dict=True,
 		)
+	data["approval"] = approvals.for_reference("Coop Loan", name)
 	return data
 
 
@@ -471,6 +472,7 @@ def get_withdrawal(name):
 			["payout_bank_name", "payout_account_number", "payout_account_name", "payout_changed_on"], as_dict=True,
 		)
 		data["member_balances"] = member_balances(doc.member, exclude_withdrawal=name)
+	data["approval"] = approvals.for_reference("Coop Withdrawal", name)
 	return data
 
 

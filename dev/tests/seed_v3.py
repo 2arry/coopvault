@@ -6,6 +6,7 @@ usage: seed_v3.py stage|prod PASSWORD [part]
 On staging, part 1 also makes the online payments through the fake Paystack.
 """
 import json
+import os
 import subprocess
 import sys
 
@@ -13,13 +14,14 @@ import requests
 
 TARGET, PASSWORD = sys.argv[1], sys.argv[2]
 PART = sys.argv[3] if len(sys.argv) > 3 else "1"
-S = "/tmp/claude-1000/-home-ubuntu-start-paymnet/f3ebab8a-3100-41ae-b580-91fa79ce80fd/scratchpad"
+S = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".state")  # git-ignored
+os.makedirs(S, exist_ok=True)
 BENCH = "/home/ubuntu/start-paymnet/backend"
 if TARGET == "stage":
 	BASE, SITE, OUT = "http://127.0.0.1:8100/api/method/coopvault.api.", "coopvault.test", f"{S}/demo_stage.json"
 	H = {"Accept": "application/json", "Host": SITE}
 elif TARGET == "prod":
-	BASE, SITE, OUT = "https://api-payment.secureestate.app/api/method/coopvault.api.", "api-payment.secureestate.app", f"{S}/demo_v3.json"
+	BASE, SITE, OUT = "https://api-payment.secureestate.app/api/method/coopvault.api.", "api-payment.secureestate.app", f"{S}/demo_prod.json"
 	H = {"Accept": "application/json", "Origin": "https://pay-frappe.web.app"}
 else:
 	sys.exit("target must be stage or prod")
