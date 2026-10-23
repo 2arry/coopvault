@@ -16,4 +16,5 @@ DB=$(python3 -c "import json;print(json.load(open('sites/coopvault.test/site_con
 redis-cli -p 13000 --scan --pattern "$DB|rl:*" | xargs -r -d '\n' redis-cli -p 13000 del >/dev/null
 python3 $HERE/tests/seed_v3.py stage "$PASSWORD" | tail -1
 python3 $HERE/tests/seed_officers.py stage "$PASSWORD" | tail -1
+python3 $HERE/tests/seed_phase5.py stage "$PASSWORD" | tail -1
 cd /home/ubuntu/start-paymnet/frontend && VITE_API_URL=http://127.0.0.1:8100 npx vite build --outDir dist-stage --emptyOutDir >/dev/null 2>&1 && echo "built frontend/dist-stage"
