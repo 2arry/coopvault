@@ -14,7 +14,7 @@ HOST = "http://127.0.0.1:8100"
 BASE = HOST + "/api/method/coopvault.api."
 FAKE = "http://127.0.0.1:8899"
 SECRET = "sk_test_fake_secret"
-BENCH = "/home/ubuntu/start-paymnet/backend"
+BENCH = "/home/ubuntu/start-payment/backend"
 RUN = secrets.token_hex(3)
 results = []
 

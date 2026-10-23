@@ -14,7 +14,7 @@ import requests
 
 TARGET, PASSWORD = sys.argv[1], sys.argv[2]
 S = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".state")  # git-ignored
-BENCH = "/home/ubuntu/start-paymnet/backend"
+BENCH = "/home/ubuntu/start-payment/backend"
 if TARGET == "stage":
 	BASE, STATE, SITE = "http://127.0.0.1:8100/api/method/coopvault.api.", f"{S}/demo_stage.json", "coopvault.test"
 	H = {"Accept": "application/json", "Host": "coopvault.test"}

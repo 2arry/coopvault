@@ -4,7 +4,7 @@
 # Needs: bench --site coopvault.test serve --port 8100 --noreload, and dev/tests/fake_paystack.py 8899
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-BENCH=/home/ubuntu/start-paymnet/backend
+BENCH=/home/ubuntu/start-payment/backend
 STATE=$HERE/tests/.state/demo_stage.json
 PASSWORD='CoopDemo#2026'
 cd $BENCH
@@ -18,4 +18,4 @@ python3 $HERE/tests/seed_v3.py stage "$PASSWORD" | tail -1
 python3 $HERE/tests/seed_officers.py stage "$PASSWORD" | tail -1
 python3 $HERE/tests/seed_phase5.py stage "$PASSWORD" | tail -1
 python3 $HERE/tests/seed_platform.py stage "$PASSWORD" | tail -1
-cd /home/ubuntu/start-paymnet/frontend && VITE_API_URL=http://127.0.0.1:8100 npx vite build --outDir dist-stage --emptyOutDir >/dev/null 2>&1 && echo "built frontend/dist-stage"
+cd /home/ubuntu/start-payment/frontend && VITE_API_URL=http://127.0.0.1:8100 npx vite build --outDir dist-stage --emptyOutDir >/dev/null 2>&1 && echo "built frontend/dist-stage"

@@ -16,7 +16,7 @@ TARGET, PASSWORD = sys.argv[1], sys.argv[2]
 PART = sys.argv[3] if len(sys.argv) > 3 else "1"
 S = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".state")  # git-ignored
 os.makedirs(S, exist_ok=True)
-BENCH = "/home/ubuntu/start-paymnet/backend"
+BENCH = "/home/ubuntu/start-payment/backend"
 if TARGET == "stage":
 	BASE, SITE, OUT = "http://127.0.0.1:8100/api/method/coopvault.api.", "coopvault.test", f"{S}/demo_stage.json"
 	H = {"Accept": "application/json", "Host": SITE}
