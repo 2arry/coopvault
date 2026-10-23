@@ -138,12 +138,18 @@ def usage(cooperative):
 def fits(plan, use):
 	"""Reasons the group's current usage doesn't fit a plan (empty when it fits)."""
 	out = []
-	for key, limit, label in (("members", "max_members", _("members")), ("loan_products", "max_loan_products",
-			_("loan products")), ("savings_products", "max_savings_products", _("savings products"))):
-		if cint(plan.get(limit)) and use[key] > cint(plan.get(limit)):
-			out.append(_("{0} allows {1} {2}; the group has {3}").format(plan.plan_name, cint(plan.get(limit)), label,
-				use[key]))
+	for key, limit in (("members", "max_members"), ("loan_products", "max_loan_products"),
+			("savings_products", "max_savings_products")):
+		n = cint(plan.get(limit))
+		if n and use[key] > n:
+			out.append(_("{0} allows {1}; the group has {2}").format(plan.plan_name, _count(n, key), use[key]))
 	return out
+
+
+def _count(n, key):
+	one, many = {"members": (_("member"), _("members")), "loan_products": (_("loan product"), _("loan products")),
+		"savings_products": (_("savings product"), _("savings products"))}[key]
+	return f"{n} {one if n == 1 else many}"
 
 
 def _upgrade_hint():
@@ -155,8 +161,8 @@ def check_members(cooperative, adding=1):
 	if plan and cint(plan.max_members):
 		count = usage(cooperative).members
 		if count + adding > cint(plan.max_members):
-			frappe.throw(_("{0} allows {1} members and the group has {2}. {3}").format(
-				plan.plan_name, cint(plan.max_members), count, _upgrade_hint()))
+			frappe.throw(_("{0} allows {1} and the group has {2}. {3}").format(
+				plan.plan_name, _count(cint(plan.max_members), "members"), count, _upgrade_hint()))
 	check_not_lapsed(cooperative, _("New members can join once the subscription is renewed."))
 
 
@@ -164,11 +170,11 @@ def check_products(cooperative, doctype, enabling=True):
 	if not enabling:
 		return
 	plan = plan_of(cooperative)
-	field, label = ("max_loan_products", _("loan products")) if doctype == "Coop Loan Product" else (
-		"max_savings_products", _("savings products"))
+	field, key = ("max_loan_products", "loan_products") if doctype == "Coop Loan Product" else (
+		"max_savings_products", "savings_products")
 	limit = cint(plan.get(field)) if plan else 0
 	if limit and frappe.db.count(doctype, {"cooperative": cooperative, "enabled": 1}) >= limit:
-		frappe.throw(_("{0} allows {1} {2} switched on. {3}").format(plan.plan_name, limit, label, _upgrade_hint()))
+		frappe.throw(_("{0} allows {1} switched on. {2}").format(plan.plan_name, _count(limit, key), _upgrade_hint()))
 
 
 def has(cooperative, feature):

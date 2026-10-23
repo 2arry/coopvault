@@ -72,9 +72,9 @@ rejected("the plan's member limit holds", "coop.join_cooperative", T["m4"], join
 rejected("adding by hand counts too", "coop.add_member", FOUNDER, cooperative=CO, full_name="Extra Person",
 	phone=f"0809{int(RUN, 16) % 10**7:07d}", contains="allows 5 members")
 rejected("one loan product on this plan", "finance.save_loan_product", FOUNDER, cooperative=CO, product_name="Quick",
-	interest_method="Flat", interest_rate=2, rate_period="Per month", contains="allows 1 loan products")
+	interest_method="Flat", interest_rate=2, rate_period="Per month", contains="allows 1 loan product ")
 rejected("no voluntary savings on this plan", "finance.save_savings_product", FOUNDER, cooperative=CO,
-	product_name="Christmas", contains="allows 1 savings products")
+	product_name="Christmas", contains="allows 1 savings product ")
 cfg = get("payments.config", T["m1"], cooperative=CO)
 check("features follow the plan", cfg["autosave"] is False and cfg["dedicated_accounts"] is False and cfg["online"] is True, cfg)
 rejected("account numbers aren't on this plan", "payments.request_dedicated_account", T["m1"], cooperative=CO,
@@ -169,5 +169,9 @@ check("a declined group can be approved later, with its trial", g["status"] == "
 lst = get("platform.list_groups", OPS, q=f"ikeja traders {RUN}")
 check("search groups", [x["name"] for x in lst] == [CO], [x["name"] for x in lst])
 check("filter by status", all(x["status"] == "Active" for x in get("platform.list_groups", OPS, status="Active")))
+
+# The test plan isn't offered to anyone after this run
+call("platform.save_plan", OPS, name=TINY, plan_name=TINY, enabled=0)
+check("a plan can be switched off", not next(p for p in get("platform.list_plans", OPS) if p["name"] == TINY)["enabled"])
 
 done("platform console")
