@@ -32,7 +32,9 @@ def member_balances(member, exclude_loan=None, exclude_withdrawal=None):
 	guarantor for someone else's loan are held until that loan is repaid.
 	"""
 	cooperative = frappe.db.get_value("Coop Member", member, "cooperative")
-	multiplier = flt(frappe.db.get_value("Cooperative", cooperative, "loan_multiplier"))
+	# The most generous loan product sets the headline limit (each product checks its own share)
+	shares = frappe.get_all("Coop Loan Product", filters={"cooperative": cooperative, "enabled": 1}, pluck="savings_multiplier")
+	multiplier = max(flt(x) for x in shares) if shares else flt(frappe.db.get_value("Cooperative", cooperative, "loan_multiplier"))
 
 	contributed = _sum("Coop Contribution", "amount", {"member": member, "status": "Confirmed"})
 	repaid = _sum("Coop Loan Repayment", "amount", {"member": member, "status": "Confirmed"})

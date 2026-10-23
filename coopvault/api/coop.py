@@ -304,6 +304,14 @@ def get_dashboard(cooperative):
 		data["autosave"] = autosave_status(membership.name)
 		data["dedicated_account"] = dedicated_account_status(membership.name)
 		data["security_hold_until"] = frappe.db.get_value("Coop Member", membership.name, "security_hold_until")
+		data["guarantee_requests"] = frappe.db.sql(
+			"""select l.name as loan, l.member_name as borrower, l.principal, g.amount
+			from `tabCoop Loan Guarantor` g join `tabCoop Loan` l on l.name = g.parent
+			where g.member = %s and g.status = 'Pending' and l.status in ('Pending', 'Approved')
+			order by l.creation desc""",
+			membership.name,
+			as_dict=True,
+		)
 
 	if membership.is_admin:
 		data["period"] = period_summary(cooperative)

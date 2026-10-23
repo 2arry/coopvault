@@ -1081,6 +1081,10 @@ def _approval_detail(a, me, payout_fields):
 		row.is_mine = row.member == me.name
 		row.member_balances = member_balances(row.member, **({"exclude_loan": dn} if a["action"] == "Loan"
 			else {"exclude_withdrawal": dn}))
+		if a["action"] == "Loan":
+			row.product_name = frappe.db.get_value("Coop Loan Product", row.product, "product_name") if row.product else None
+			row.rate_text = loans.describe_rate(row.interest_method or "Flat", row.interest_rate, row.rate_period or "Whole loan")
+			row.guarantors = frappe.get_all("Coop Loan Guarantor", filters={"parent": dn}, fields=["member_name", "amount", "status"])
 		return row
 	if a["action"] == "Offline payment":
 		date_field = "payment_date" if dt == "Coop Loan Repayment" else "contribution_date"

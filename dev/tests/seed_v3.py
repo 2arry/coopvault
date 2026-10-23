@@ -115,8 +115,20 @@ if PART == "1":
 		purpose="Restock the shop for December")
 	call("finance.review_loan", T, name=loan["name"], action="approve", transfer_reference="TRF-0919-MUSA")
 	call("finance.confirm_loan_received", tok["musa"], name=loan["name"])
-	bench_set("Coop Loan", loan["name"], {"disbursed_on": "2026-09-19", "received_on": "2026-09-20", "due_date": "2026-12-20",
-		"application_date": "2026-09-18"})
+	# Backdate it to September, and lay its instalments out from then
+	out = subprocess.run(["bench", "--site", SITE, "console"], cwd=BENCH, capture_output=True, text=True, input=f"""
+from coopvault import loans
+d = frappe.get_doc("Coop Loan", "{loan['name']}")
+d.disbursed_on, d.received_on, d.application_date = "2026-09-19", "2026-09-20", "2026-09-18"
+loans.start_schedule(d)
+d.flags.ignore_validate = True
+d.save(ignore_permissions=True)
+loans.refresh(d.name)
+frappe.db.commit()
+""")
+	if out.returncode:
+		print(out.stdout[-1500:], out.stderr[-1500:])
+		sys.exit(1)
 
 	# Tunde: his own loan has to be sent by Amaka; it's on its way and waiting for him to confirm
 	loan_t = call("finance.apply_loan", T, cooperative=CO, amount=20000, tenure_months=2, purpose="Generator repair")

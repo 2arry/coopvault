@@ -90,5 +90,20 @@ if not call("accounts.journals", A, "GET", cooperative=CO, voucher_type="Manual 
 		lines=[{"account": acct["Operating Expense"], "debit": 2500}, {"account": acct["Bank"], "credit": 2500}])
 	call("accounts.approve_journal", T, name=j["name"])
 
+# A second loan product that needs a guarantor; Musa asks Ngozi to guarantee one
+products = call("finance.admin_loan_products", A, "GET", cooperative=CO)
+emergency = next((p for p in products if p["product_name"] == "Emergency loan"), None)
+if not emergency:
+	products = call("finance.save_loan_product", A, cooperative=CO, product_name="Emergency loan",
+		description="For the unexpected: hospital bills, urgent repairs. Needs one member to guarantee half of it.",
+		interest_method="Reducing balance", interest_rate=2, rate_period="Per month", min_tenure_months=2, max_tenure_months=6,
+		processing_fee_percent=1, penalty_percent=5, grace_days=3, guarantors_required=1, guarantee_percent=50,
+		max_active_loans=2, require_up_to_date=0)
+	emergency = next(p for p in products if p["product_name"] == "Emergency loan")
+musa = session("musa")
+if not any(l.get("product") == emergency["name"] for l in call("finance.list_loans", musa, "GET", cooperative=CO)):
+	call("finance.apply_loan", musa, cooperative=CO, amount=8000, tenure_months=4, product=emergency["name"],
+		purpose="Fix the shop's freezer", guarantors=[{"member": state["members"]["ngozi"], "amount": 4000}])
+
 json.dump(state, open(STATE, "w"))
 print(json.dumps({k: v for k, v in state.items() if k != "members"}))

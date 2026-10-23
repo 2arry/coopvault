@@ -77,8 +77,9 @@ def describe_rate(method, rate, period):
 	if method == "Interest free" or not flt(rate):
 		return _("Interest free")
 	per = {"Per month": _(" a month"), "Per year": _(" a year"), "Whole loan": _(" for the whole loan")}[period]
-	how = _(" on the reducing balance") if method == "Reducing balance" else _(" flat")
-	return f"{flt(rate):g}%{per}{how}"
+	if method == "Reducing balance":
+		return f"{flt(rate):g}%{per}" + _(" on the reducing balance")
+	return f"{flt(rate):g}%" + _(" flat") + per
 
 
 # Schedules -------------------------------------------------------------------------------
@@ -411,7 +412,8 @@ def eligibility(member, product, amount=None, months=None):
 	if amount is not None:
 		amount = flt(amount)
 		check("amount", flt(p.min_amount) <= amount <= limit + TOL and amount > 0,
-			_("Between {0} and {1}").format(_money(p.min_amount, m.cooperative), _money(limit, m.cooperative)))
+			_("Between {0} and {1}").format(_money(p.min_amount, m.cooperative), _money(limit, m.cooperative)) if flt(p.min_amount)
+			else _("Up to {0}").format(_money(limit, m.cooperative)))
 	if months is not None:
 		check("months", cint(p.min_tenure_months) <= cint(months) <= cint(p.max_tenure_months),
 			_("{0} to {1} months").format(cint(p.min_tenure_months), cint(p.max_tenure_months)))
